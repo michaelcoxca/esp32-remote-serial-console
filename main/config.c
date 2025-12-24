@@ -94,8 +94,21 @@ void config_reset_to_factory(void) {
         nvs_erase_all(handle);
         nvs_close(handle);
     }
+
+    // Clear RAM
     memset(&g_config, 0, sizeof(g_config));
+
+    // Set defaults in RAM
     g_config.port = 23;
+    strcpy(g_config.gateway, "192.168.1.1");
+    strcpy(g_config.netmask, "255.255.255.0");
+
+    // Persist ONLY the allowed defaults to NVS
+    config_save_port(23);
+    config_save_gateway("192.168.1.1");
+    config_save_netmask("255.255.255.0");
+
+    // Note: ssid, ip, password remain unset (not saved to NVS)
 }
 
 esp_err_t config_load(void) {
@@ -134,6 +147,7 @@ esp_err_t config_load(void) {
     return ESP_OK;
 }
 
+
 void config_init(void) {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -143,11 +157,41 @@ void config_init(void) {
     }
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "NVS init failed (0x%x)", ret);
+        // Fallback: reset to factory and use RAM defaults
         config_reset_to_factory();
         return;
     }
 
-    config_load();
+    // Load current config from NVS
+    esp_err_t load_err = config_load();
+
+    // Check if default fields are missing or invalid
+    bool missing_defaults = false;
+
+    if (g_config.port == 0) {
+        ESP_LOGW(TAG, "Port missing or zero in NVS");
+        missing_defaults = true;
+    }
+    if (g_config.gateway[0] == '\0') {
+        ESP_LOGW(TAG, "Gateway missing in NVS");
+        missing_defaults = true;
+    }
+    if (g_config.netmask[0] == '\0') {
+        ESP_LOGW(TAG, "Netmask missing in NVS");
+        missing_defaults = true;
+    }
+
+    // Also trigger reset if NVS was completely empty
+    if (load_err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "NVS config namespace not found");
+        missing_defaults = true;
+    }
+
+    if (missing_defaults) {
+        ESP_LOGI(TAG, "Missing default values — restoring factory defaults");
+        config_reset_to_factory(); // This saves port, gw, mask to NVS
+        // config_reset_to_factory() already sets g_config + saves to NVS
+    }
 }
 
 bool config_is_valid(void) {

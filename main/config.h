@@ -25,6 +25,7 @@ extern device_config_t g_config;
 void config_init(void);
 void config_reset_to_factory(void);
 bool config_is_valid(void);
+esp_err_t config_load(void);
 
 // Fine-grained save functions (validate before calling!)
 esp_err_t config_save_ssid(const char *ssid);
@@ -33,5 +34,4 @@ esp_err_t config_save_ip(const char *ip);
 esp_err_t config_save_netmask(const char *mask);
 esp_err_t config_save_gateway(const char *gw);
 esp_err_t config_save_port(uint16_t port);
-
 #endif // CONFIG_H

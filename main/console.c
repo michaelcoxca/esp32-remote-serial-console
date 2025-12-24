@@ -1,145 +1,309 @@
 // console.c
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "linenoise/linenoise.h"
+#include "esp_console.h"
+#include "argtable3/argtable3.h"
 #include "config.h"
 #include "utils.h"
 
-#define PROMPT "esp32> "
+// --- Argument structs for each command ---
+static struct {
+    struct arg_str *ssid;
+    struct arg_end *end;
+} set_ssid_args;
 
-static void print_help(void) {
-    printf("Posibles comandos:\n");
-    printf("conf        -> muestra configuración actual\n");
-    printf("reset       -> reinicio a valores de fábrica\n");
-    printf("reboot      -> reinicia el programa\n");
-    printf("set:\n");
-    printf("  ssid <ssid> -> configura el AP wifi\n");
-    printf("  pass <pass> -> configura la password\n");
-    printf("  gw   <ip>   -> gateway (y DNS)\n");
-    printf("  mask <mask> -> máscara de red\n");
-    printf("  ip   <ip>   -> IP estática\n");
-    printf("  port <port> -> puerto de escucha (default: 23)\n");
-}
+static struct {
+    struct arg_str *pass;
+    struct arg_end *end;
+} set_pass_args;
 
-static void handle_conf(void) {
+static struct {
+    struct arg_str *ip;
+    struct arg_end *end;
+} set_ip_args;
+
+static struct {
+    struct arg_str *mask;
+    struct arg_end *end;
+} set_mask_args;
+
+static struct {
+    struct arg_str *gw;
+    struct arg_end *end;
+} set_gw_args;
+
+static struct {
+    struct arg_int *port;
+    struct arg_end *end;
+} set_port_args;
+
+// --- Command handlers ---
+static int conf_cmd(int argc, char **argv) {
+    // Reload config from NVS to show true persistent state
+    device_config_t temp_config;
+    memcpy(&temp_config, &g_config, sizeof(device_config_t)); // backup current RAM state
+
+    esp_err_t err = config_load(); // reload from NVS into g_config
+    if (err != ESP_OK) {
+        printf("Warning: Failed to reload config from NVS (using current RAM copy)\n");
+        // Optionally restore backup if you don't want g_config changed
+        // But usually, it's safe to keep the loaded state
+    }
+
+    bool is_configured = config_is_valid(); // This checks: ssid && password && ip
+
+    printf("=== Configuration Status ===\n");
+    if (is_configured) {
+        printf("Device is FULLY CONFIGURED and ready to connect.\n");
+    } else {
+        printf("Device is INCOMPLETELY CONFIGURED.\n");
+    }
+    printf("\n");
+
+    printf("=== Configuration Values ===\n");    
     printf("ssid: %s\n", g_config.ssid[0] ? g_config.ssid : "(not set)");
     printf("pass: %s\n", g_config.password[0] ? "*** (set)" : "(not set)");
     printf("ip:   %s\n", g_config.ip[0] ? g_config.ip : "(not set)");
     printf("mask: %s\n", g_config.netmask[0] ? g_config.netmask : "(not set)");
     printf("gw:   %s\n", g_config.gateway[0] ? g_config.gateway : "(not set)");
     printf("port: %d\n", g_config.port);
+    return 0;
 }
 
-static void handle_set(char *cmd, char *arg) {
-    esp_err_t err = ESP_FAIL;
-
-    if (strcmp(cmd, "ssid") == 0) {
-        if (!is_valid_ssid(arg)) {
-            printf("ERR: SSID must be 1-32 chars\n");
-            return;
-        }
-        err = config_save_ssid(arg);
-    }
-    else if (strcmp(cmd, "pass") == 0) {
-        if (!is_valid_password(arg)) {
-            printf("ERR: Password too long (max 64)\n");
-            return;
-        }
-        err = config_save_password(arg);
-    }
-    else if (strcmp(cmd, "ip") == 0) {
-        if (!is_valid_ipv4(arg)) {
-            printf("ERR: Invalid IP address\n");
-            return;
-        }
-        err = config_save_ip(arg);
-    }
-    else if (strcmp(cmd, "mask") == 0) {
-        if (!is_valid_ipv4(arg)) {
-            printf("ERR: Invalid netmask\n");
-            return;
-        }
-        err = config_save_netmask(arg);
-    }
-    else if (strcmp(cmd, "gw") == 0) {
-        if (!is_valid_ipv4(arg)) {
-            printf("ERR: Invalid gateway IP\n");
-            return;
-        }
-        err = config_save_gateway(arg);
-    }
-    else if (strcmp(cmd, "port") == 0) {
-        uint16_t port;
-        if (!is_valid_port(arg, &port)) {
-            printf("ERR: Port must be 1-65535\n");
-            return;
-        }
-        err = config_save_port(port);
-    }
-    else {
-        printf("ERR: Unknown set command '%s'\n", cmd);
-        return;
-    }
-
-    printf("%s\n", (err == ESP_OK) ? "OK" : "ERR: NVS write failed");
+static int reset_cmd(int argc, char **argv) {
+    config_reset_to_factory();
+    printf("Factory reset done. Use 'reboot' to apply.\n");
+    return 0;
 }
 
-void console_task(void *pvParams) {
-    char *line;
-    (void)pvParams;
-
-    // Optional: load history (not persistent by default in linenoise-ESP)
-    linenoiseHistorySetMaxLen(10);
-
-    printf("\n=== ESP32 UART Console ===\n");
-    print_help();
-
-    while (1) {
-        line = linenoise(PROMPT);
-        if (line == NULL) continue; // Ctrl-C/D
-
-        if (strlen(line) > 0) {
-            linenoiseHistoryAdd(line); // Add to history
-            char *cmd = strtok(line, " \t");
-            if (cmd) {
-                if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
-                    print_help();
-                }
-                else if (strcmp(cmd, "conf") == 0) {
-                    handle_conf();
-                }
-                else if (strcmp(cmd, "reset") == 0) {
-                    config_reset_to_factory();
-                    printf("Factory reset done. Reboot to apply.\n");
-                }
-                else if (strcmp(cmd, "reboot") == 0) {
-                    printf("Rebooting...\n");
-                    esp_restart();
-                }
-                else if (strcmp(cmd, "set") == 0) {
-                    char *subcmd = strtok(NULL, " \t");
-                    char *arg = strtok(NULL, ""); // rest of line (to support spaces in SSID? optional)
-                    if (!subcmd) {
-                        printf("ERR: set requires subcommand (ssid, pass, ip, ...)\n");
-                    } else if (!arg) {
-                        printf("ERR: missing value for '%s'\n", subcmd);
-                    } else {
-                        // Trim leading space in arg (in case of "set ssid  MyNet")
-                        while (*arg == ' ') arg++;
-                        handle_set(subcmd, arg);
-                    }
-                } else {
-                    printf("ERR: Unknown command. Type 'help'.\n");
-                }
-            }
-        }
-        linenoiseFree(line);
-    }
+static int reboot_cmd(int argc, char **argv) {
+    printf("Rebooting...\n");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_restart();
+    return 0;
 }
 
-void console_init(void) {
-    xTaskCreate(console_task, "console", 4096, NULL, 5, NULL);
+// --- SET subcommands ---
+static int set_ssid_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_ssid_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_ssid_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *ssid = set_ssid_args.ssid->sval[0];
+    if (!is_valid_ssid(ssid)) {
+        printf("ERR: SSID must be 1-32 chars\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_ssid(ssid);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed (0x%x)\n", err);
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
+static int set_pass_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_pass_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_pass_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *pass = set_pass_args.pass->sval[0];
+    if (!is_valid_password(pass)) {
+        printf("ERR: Password too long (max 64 chars)\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_password(pass);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
+static int set_ip_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_ip_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_ip_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *ip = set_ip_args.ip->sval[0];
+    if (!is_valid_ipv4(ip)) {
+        printf("ERR: Invalid IP address\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_ip(ip);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
+static int set_mask_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_mask_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_mask_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *mask = set_mask_args.mask->sval[0];
+    if (!is_valid_ipv4(mask)) {
+        printf("ERR: Invalid netmask\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_netmask(mask);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
+static int set_gw_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_gw_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_gw_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *gw = set_gw_args.gw->sval[0];
+    if (!is_valid_ipv4(gw)) {
+        printf("ERR: Invalid gateway IP\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_gateway(gw);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
+static int set_port_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_port_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_port_args.end, argv[0]);
+        return 1;
+    }
+
+    int port = set_port_args.port->ival[0];
+    if (port < 1 || port > 65535) {
+        printf("ERR: Port must be 1-65535\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_port((uint16_t)port);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
+// --- Register all commands ---
+void console_register_commands(void) {
+    // Register commands
+    const esp_console_cmd_t conf_cmd_cfg = {
+        .command = "conf",
+        .help = "Show current configuration",
+        .func = &conf_cmd,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&conf_cmd_cfg));
+
+    const esp_console_cmd_t reset_cmd_cfg = {
+        .command = "reset",
+        .help = "Reset to factory defaults",
+        .func = &reset_cmd,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&reset_cmd_cfg));
+
+    const esp_console_cmd_t reboot_cmd_cfg = {
+        .command = "reboot",
+        .help = "Reboot the device",
+        .func = &reboot_cmd,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&reboot_cmd_cfg));
+
+    // SET commands
+    set_ssid_args.ssid = arg_str1(NULL, NULL, "<ssid>", "WiFi SSID (1-32 chars)");
+    set_ssid_args.end = arg_end(1);
+    const esp_console_cmd_t set_ssid_cmd_cfg = {
+        .command = "ssid",
+        .help = "Set WiFi SSID",
+        .func = &set_ssid_cmd,
+        .argtable = &set_ssid_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_ssid_cmd_cfg));
+
+    set_pass_args.pass = arg_str1(NULL, NULL, "<pass>", "WiFi password (0-64 chars)");
+    set_pass_args.end = arg_end(1);
+    const esp_console_cmd_t set_pass_cmd_cfg = {
+        .command = "pass",
+        .help = "Set WiFi password",
+        .func = &set_pass_cmd,
+        .argtable = &set_pass_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_pass_cmd_cfg));
+
+    set_ip_args.ip = arg_str1(NULL, NULL, "<ip>", "Static IP address");
+    set_ip_args.end = arg_end(1);
+    const esp_console_cmd_t set_ip_cmd_cfg = {
+        .command = "ip",
+        .help = "Set static IP",
+        .func = &set_ip_cmd,
+        .argtable = &set_ip_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_ip_cmd_cfg));
+
+    set_mask_args.mask = arg_str1(NULL, NULL, "<mask>", "Network mask");
+    set_mask_args.end = arg_end(1);
+    const esp_console_cmd_t set_mask_cmd_cfg = {
+        .command = "mask",
+        .help = "Set network mask",
+        .func = &set_mask_cmd,
+        .argtable = &set_mask_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mask_cmd_cfg));
+
+    set_gw_args.gw = arg_str1(NULL, NULL, "<gw>", "Gateway IP");
+    set_gw_args.end = arg_end(1);
+    const esp_console_cmd_t set_gw_cmd_cfg = {
+        .command = "gw",
+        .help = "Set gateway IP",
+        .func = &set_gw_cmd,
+        .argtable = &set_gw_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_gw_cmd_cfg));
+
+    set_port_args.port = arg_int1(NULL, NULL, "<port>", "Listen port (1-65535)");
+    set_port_args.end = arg_end(1);
+    const esp_console_cmd_t set_port_cmd_cfg = {
+        .command = "port",
+        .help = "Set listen port",
+        .func = &set_port_cmd,
+        .argtable = &set_port_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_port_cmd_cfg));
+
+    // Force register help
+    esp_console_register_help_command();
 }
