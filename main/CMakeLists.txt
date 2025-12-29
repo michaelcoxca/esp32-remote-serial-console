@@ -4,6 +4,7 @@ idf_component_register(SRCS
                             "console.c"
                             "console_settings.c"
                             "wifi_manager.c"
+                            "tcp_server.c"
                        INCLUDE_DIRS 
                             "."
                        REQUIRES 
@@ -14,4 +15,5 @@ idf_component_register(SRCS
                             esp_wifi  
                             esp_netif 
                             esp_event 
+                            esp_timer
                        )
