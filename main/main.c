@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "config.h"
 #include "console.h"
+#include "wifi_manager.h"
 
 
 static const char* TAG = "main";
@@ -26,36 +27,25 @@ void app_main(void) {
     // Example: start Wi-Fi if config is valid
     if (config_is_valid()) {
         ESP_LOGI(TAG, "Config is valid: starting WiFi");
-        // wifi_start_static();
+        wifi_manager_start();
+    }
+    else {
+        ESP_LOGW(TAG, "Device is not configured yet.");
     }
 
     // Keep main task alive (e.g., for background work)
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(5000)); // or do real work
+        if (wifi_manager_is_connected()) {
+            ESP_LOGI(TAG, "WiFi up");
+        }
+        else {
+            ESP_LOGI(TAG, "WiFi down");
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
 
-
-
-
-
-
-
-
-
-/*
-#include <stdio.h>
-#include <string.h>
-#include "esp_system.h"
-#include "esp_vfs_fat.h"
-#include "argtable3/argtable3.h"
-#include "nvs.h"
-#include "nvs_flash.h"
-#include "cmd_nvs.h"
-#include "cmd_system.h"
-#include "console_settings.h"
-*/
 
 
 

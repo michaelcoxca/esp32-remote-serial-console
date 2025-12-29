@@ -1,3 +1,17 @@
-idf_component_register(SRCS "main.c" "config.c" "console.c" "utils.c" "console_settings.c"
-                       INCLUDE_DIRS "."
-                       REQUIRES console nvs_flash vfs esp_driver_uart)
+idf_component_register(SRCS 
+                            "main.c"
+                            "config.c"
+                            "console.c"
+                            "console_settings.c"
+                            "wifi_manager.c"
+                       INCLUDE_DIRS 
+                            "."
+                       REQUIRES 
+                            console
+                            nvs_flash
+                            vfs
+                            esp_driver_uart
+                            esp_wifi  
+                            esp_netif 
+                            esp_event 
+                       )

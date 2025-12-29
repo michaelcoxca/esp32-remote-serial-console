@@ -26,6 +26,9 @@ void config_init(void);
 void config_reset_to_factory(void);
 bool config_is_valid(void);
 esp_err_t config_load(void);
+bool is_valid_ipv4(const char *ip);
+bool is_valid_ssid(const char *ssid);
+bool is_valid_password(const char *pass);
 
 // Fine-grained save functions (validate before calling!)
 esp_err_t config_save_ssid(const char *ssid);

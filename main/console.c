@@ -8,8 +8,10 @@
 #include "linenoise/linenoise.h"
 #include "argtable3/argtable3.h"
 #include "config.h"
-#include "utils.h"
 #include "console_settings.h"
+
+static int conf_cmd(int argc, char **argv);
+static int reboot_cmd(int argc, char **argv);
 
 static const char* TAG = "console";
 
@@ -81,7 +83,8 @@ static int conf_cmd(int argc, char **argv) {
 
 static int reset_cmd(int argc, char **argv) {
     config_reset_to_factory();
-    printf("Factory reset done. Use 'reboot' to apply.\n");
+    printf("Factory reset done. Rebooting to apply.\n");
+    reboot_cmd(0, NULL);
     return 0;
 }
 
@@ -327,6 +330,10 @@ void console_task(void *arg) {
     const char* prompt = setup_prompt(PROMPT_STR ">");
 
     printf("\n=== ESP32 Console Ready ===\n");
+    if (!config_is_valid()) {
+        conf_cmd(0, NULL);
+        printf("\nPlease configure the device. Reboot when ready.\n\n");
+    }
     printf("Type 'help' to see available commands.\n\n");
 
     if (linenoiseIsDumbMode()) {
