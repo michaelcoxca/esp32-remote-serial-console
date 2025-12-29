@@ -30,8 +30,6 @@
 #define TELNET_ECHO      1
 #define TELNET_SGA       3
 
-#define PASSWORD         "secret" // FIXME: use secure storage in production
-
 #define KEEPALIVE_IDLE     5    // Start probing after X seconds of inactivity
 #define KEEPALIVE_INTERVAL 1    // Send a probe every X seconds
 #define KEEPALIVE_COUNT    5    // Drop connection after X failed probes
@@ -178,14 +176,11 @@ static bool authenticate_client(int sock)
     }
 
     password[idx] = '\0';
-    bool success = (strcmp(password, PASSWORD) == 0);
+    bool success = (strcmp(password, g_config.sespass) == 0);
 
     if (success) {
         s_auth_state.attempts = 0;
         ESP_LOGI(TAG, "Auth: SUCCESS - password accepted, counter reset");
-        const char welcome[] = 
-            "\r\nRemote console open.\r\n";
-        send(sock, welcome, strlen(welcome), 0);
         return true;
     } else {
         s_auth_state.attempts++;
@@ -272,10 +267,10 @@ static void handle_client_secure(int sock)
     const char banner[] = "\r\nRemote Console Telnet Server\r\n";
     send(sock, banner, strlen(banner), 0);
 
-    if (authenticate_client(sock)) {
+    if (g_config.sespass[0] == '\0' || authenticate_client(sock)) {
+        const char welcome[] = "\r\nRemote console open.\r\n";
+        send(sock, welcome, strlen(welcome), 0);
         handle_session(sock);
-    } else {
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
 }
 

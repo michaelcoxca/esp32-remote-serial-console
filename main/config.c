@@ -32,6 +32,10 @@ bool is_valid_password(const char *pass) {
     return (strlen(pass) <= 64);
 }
 
+bool is_valid_sespass(const char *pass) {
+    //if (!pass) return false;
+    return (strlen(pass) <= 64);
+}
 
 
 // --- Save functions ---
@@ -106,6 +110,18 @@ esp_err_t config_save_port(uint16_t port) {
     return err;
 }
 
+esp_err_t config_save_sespass(const char *pass) {
+    strncpy(g_config.sespass, pass, WIFI_PASS_MAX_LEN);
+    g_config.sespass[WIFI_PASS_MAX_LEN] = '\0';
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_write(&handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(handle, "sespass", g_config.sespass);
+    nvs_close(handle);
+    return err;
+}
+
 // --- Lifecycle ---
 void config_reset_to_factory(void) {
     nvs_handle_t handle;
@@ -122,11 +138,13 @@ void config_reset_to_factory(void) {
     g_config.port = 23;
     strcpy(g_config.gateway, "192.168.1.1");
     strcpy(g_config.netmask, "255.255.255.0");
+    strcpy(g_config.sespass, "remotecon");
 
     // Persist ONLY the allowed defaults to NVS
     config_save_port(23);
     config_save_gateway("192.168.1.1");
     config_save_netmask("255.255.255.0");
+    config_save_sespass("remotecon");
 
     // Note: ssid, ip, password remain unset (not saved to NVS)
 }
@@ -158,6 +176,9 @@ esp_err_t config_load(void) {
 
     nvs_get_u16(handle, "port", &g_config.port);
 
+    len = sizeof(g_config.sespass);
+    nvs_get_str(handle, "sespass", g_config.sespass, &len);
+    
     nvs_close(handle);
 
     if (g_config.port == 0) {

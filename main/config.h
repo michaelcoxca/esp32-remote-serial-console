@@ -9,6 +9,8 @@
 #define WIFI_SSID_MAX_LEN   32
 #define WIFI_PASS_MAX_LEN   64
 #define IP_ADDR_STR_LEN     16  // "255.255.255.255"
+#define SESPASS_MAX_LEN     64
+
 
 typedef struct {
     char ssid[WIFI_SSID_MAX_LEN + 1];
@@ -17,6 +19,7 @@ typedef struct {
     char netmask[IP_ADDR_STR_LEN];
     char gateway[IP_ADDR_STR_LEN];
     uint16_t port;
+    char sespass[SESPASS_MAX_LEN];
 } device_config_t;
 
 extern device_config_t g_config;
@@ -29,6 +32,7 @@ esp_err_t config_load(void);
 bool is_valid_ipv4(const char *ip);
 bool is_valid_ssid(const char *ssid);
 bool is_valid_password(const char *pass);
+bool is_valid_sespass(const char *pass);
 
 // Fine-grained save functions (validate before calling!)
 esp_err_t config_save_ssid(const char *ssid);
@@ -37,4 +41,6 @@ esp_err_t config_save_ip(const char *ip);
 esp_err_t config_save_netmask(const char *mask);
 esp_err_t config_save_gateway(const char *gw);
 esp_err_t config_save_port(uint16_t port);
+esp_err_t config_save_sespass(const char *pass);
+
 #endif // CONFIG_H

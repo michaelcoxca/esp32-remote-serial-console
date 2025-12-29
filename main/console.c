@@ -48,6 +48,11 @@ static struct {
     struct arg_end *end;
 } set_port_args;
 
+static struct {
+    struct arg_str *pass;
+    struct arg_end *end;
+} set_sespass_args;
+
 // --- Command handlers ---
 static int conf_cmd(int argc, char **argv) {
     // Reload config from NVS to show true persistent state
@@ -72,12 +77,13 @@ static int conf_cmd(int argc, char **argv) {
     printf("\n");
 
     printf("=== Configuration Values ===\n");    
-    printf("ssid: %s\n", g_config.ssid[0] ? g_config.ssid : "(not set)");
-    printf("pass: %s\n", g_config.password[0] ? "*** (set)" : "(not set)");
-    printf("ip:   %s\n", g_config.ip[0] ? g_config.ip : "(not set)");
-    printf("mask: %s\n", g_config.netmask[0] ? g_config.netmask : "(not set)");
-    printf("gw:   %s\n", g_config.gateway[0] ? g_config.gateway : "(not set)");
-    printf("port: %d\n", g_config.port);
+    printf("ssid:    %s\n", g_config.ssid[0] ? g_config.ssid : "(not set)");
+    printf("pass:    %s\n", g_config.password[0] ? "*** (set)" : "(not set)");
+    printf("ip:      %s\n", g_config.ip[0] ? g_config.ip : "(not set)");
+    printf("mask:    %s\n", g_config.netmask[0] ? g_config.netmask : "(not set)");
+    printf("gw:      %s\n", g_config.gateway[0] ? g_config.gateway : "(not set)");
+    printf("port:    %d\n", g_config.port);
+    printf("sespass: %s\n", g_config.sespass[0] ? "*** (set)" : "(not set)");
     return 0;
 }
 
@@ -229,6 +235,28 @@ static int set_port_cmd(int argc, char **argv) {
     return 0;
 }
 
+static int set_sespass_cmd(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_sespass_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_sespass_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *pass = set_pass_args.pass->sval[0];
+    if (!is_valid_sespass(pass)) {
+        printf("ERR: Password too long (max 64 chars)\n");
+        return 1;
+    }
+
+    esp_err_t err = config_save_sespass(pass);
+    if (err != ESP_OK) {
+        printf("ERR: NVS write failed\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
+
 // --- Register all commands ---
 void console_register_commands(void) {
     // Register commands
@@ -313,6 +341,17 @@ void console_register_commands(void) {
         .argtable = &set_port_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_port_cmd_cfg));
+
+    set_sespass_args.pass = arg_str1(NULL, NULL, "<password>", "Console session password (0-64 chars, empty to disable)");
+    set_sespass_args.end = arg_end(1);
+    const esp_console_cmd_t set_sespass_cmd_cfg = {
+        .command = "sespass",
+        .help = "Set console session password",
+        .func = &set_sespass_cmd,
+        .argtable = &set_sespass_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_sespass_cmd_cfg));
+
 
     // Force register help
     esp_console_register_help_command();
