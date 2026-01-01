@@ -5,6 +5,7 @@
 #include "driver/uart.h"
 #include "esp_vfs_dev.h"
 #include "esp_log.h"
+
 #include "config.h"
 #include "console.h"
 #include "wifi_manager.h"
@@ -12,7 +13,6 @@
 
 
 static const char* TAG = "main";
-
 
 
 void app_main(void) {
@@ -24,7 +24,7 @@ void app_main(void) {
 
     // Start Wi-Fi if config is valid
     if (config_is_valid()) {
-        ESP_LOGI(TAG, "Config is valid: starting WiFi");
+        ESP_LOGI(TAG, "Config is valid: starting console server");
         wifi_manager_start();
         tcp_server_start();
     }

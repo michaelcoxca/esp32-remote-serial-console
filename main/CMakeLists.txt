@@ -5,6 +5,7 @@ idf_component_register(SRCS
                             "console_settings.c"
                             "wifi_manager.c"
                             "tcp_server.c"
+                            "usb_direct.c"
                        INCLUDE_DIRS 
                             "."
                        REQUIRES 
@@ -16,4 +17,6 @@ idf_component_register(SRCS
                             esp_netif 
                             esp_event 
                             esp_timer
+                            esp_driver_gpio
+                            #esp_driver_usb_serial_jtag
                        )
