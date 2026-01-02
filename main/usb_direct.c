@@ -5,11 +5,14 @@
 #include "esp_log.h"
 #include "hal/usb_serial_jtag_ll.h"
 
+#define DEBUG_IO
 
 static const char* TAG = "usb";
 
 
 // Direct USB JTAG write, no interrupts, no driver.
+// It is blocking write. So it must return exacly the len asked.
+// If it returns less, it was due to timeout.
 int usb_write(const uint8_t *buf, uint32_t len) {
     if (!buf || len == 0) return 0;
 
@@ -17,7 +20,13 @@ int usb_write(const uint8_t *buf, uint32_t len) {
     const uint8_t *pos = buf;
 
     uint32_t timeouts = 0;
-    const uint32_t MAX_TIMEOUTS = 100; // avoid infinite loop (e.g., if HW stuck)
+    const uint32_t TIMEOUT_MAX = 100; // avoid infinite loop (e.g., if HW stuck)
+    const uint32_t TIMEOUT_MS  =  20; // avoid infinite loop (e.g., if HW stuck)
+
+#ifdef DEBUG_IO
+    ESP_LOGI(TAG, "USB->Host %d bytes");
+    ESP_LOG_BUFFER_HEXDUMP(TAG, buf, len, ESP_LOG_INFO);
+#endif
 
     while (total_written < len) {
         int written_now = usb_serial_jtag_ll_write_txfifo(pos, len - total_written);
@@ -27,9 +36,9 @@ int usb_write(const uint8_t *buf, uint32_t len) {
             pos += written_now;
             timeouts = 0;
         } else {
-            vTaskDelay(20 / portTICK_PERIOD_MS);  // 20 ms delay to retry
-            if (++timeouts > MAX_TIMEOUTS) {
-                ESP_LOGW(TAG, "TX timeout after %u retries", timeouts);
+            vTaskDelay(TIMEOUT_MS / portTICK_PERIOD_MS);
+            if (++timeouts > TIMEOUT_MAX) {
+                ESP_LOGW(TAG, "TX timeout after %u ms", TIMEOUT_MAX*TIMEOUT_MS);
                 break;
             }
         }
@@ -40,10 +49,12 @@ int usb_write(const uint8_t *buf, uint32_t len) {
 // Direct USB JTAG read, no interrupts, no driver.
 int usb_read(uint8_t *buf, uint32_t len) {
     int rx = usb_serial_jtag_ll_read_rxfifo(buf, len);
+#ifdef DEBUG_IO
     if (rx > 0) {
-        ESP_LOGI(TAG, "Rx %d bytes", rx);
-        ESP_LOG_BUFFER_HEXDUMP("USB RX", buf, rx, ESP_LOG_INFO);
+        ESP_LOGI(TAG, "USB<-Host %d bytes", rx);
+        ESP_LOG_BUFFER_HEXDUMP(TAG, buf, rx, ESP_LOG_INFO);
     }
+#endif
     return rx;
 }
 

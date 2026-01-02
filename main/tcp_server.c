@@ -34,6 +34,9 @@
 #define TELNET_ECHO      1
 #define TELNET_SGA       3
 
+#define TELNET_CR        13
+#define TELNET_LF        10
+
 #define USB_BUF_SIZE     64    // we will read/write in 64 bytes chunks
 
 #define KEEPALIVE_IDLE     5    // Start probing after X seconds of inactivity
@@ -54,15 +57,22 @@ static struct {
 
 
 
-// This is the main bridge function
+// This is the main bridge function you were looking for ;)
 static void handle_session(int sock)
 {
-    const char banner[] = "\r\n--- Remote console open ---\r\n"
-                          "(EOF from Telnet client will close session)\r\n\r\n";
-    send(sock, banner, strlen(banner), 0);
-
     uint8_t usb_buf[USB_BUF_SIZE];
 
+    const char banner[] = "\r\n--- Remote console open ---\r\n"
+                          "(Telnet EOF or disconnect to close session)\r\n\r\n";
+    send(sock, banner, strlen(banner), 0);
+
+    ESP_LOGI(TAG, "Bridge session started");
+
+    //----------------------------------------------------------
+    // Main IO loop
+    // Notice that Telnet → USB is 1 character at a time.
+    // Far from optimal. But simpler and enough for a serial console.
+    //----------------------------------------------------------
     while (1) {
         fd_set readset;
         FD_ZERO(&readset);
@@ -75,14 +85,15 @@ static void handle_session(int sock)
             break;
         }
 
-        // --- 1. Telnet → USB (with IAC handling) ---
+        // --- 1. Telnet → USB
         if (FD_ISSET(sock, &readset)) {
             uint8_t c;
             if (recv(sock, &c, 1, 0) <= 0) {
                 ESP_LOGI(TAG, "Client disconnected (TCP close)");
                 break;
             }
-
+            
+            // IAC handling: supress garbage
             if (c == TELNET_IAC) {
                 uint8_t cmd;
                 if (recv(sock, &cmd, 1, 0) <= 0) continue;
@@ -117,12 +128,16 @@ static void handle_session(int sock)
                     // Other IAC: discard (e.g., NOP, BRK, AYT)
                     continue;
                 }
+            // CR LF handling: supress CR to prevent double "enter"
+            } else if (c == TELNET_CR) {
+                continue;
             }
 
             // Forward data to USB
-            ESP_LOGI(TAG, "Data sent:");
-            ESP_LOG_BUFFER_HEXDUMP(TAG, &c, 1, ESP_LOG_INFO);
-            usb_write(&c, 1);
+            if (usb_write(&c, 1) != 1) {
+                const char error[] = "\r\n--- Remote end not listening ---\r\n";
+                send(sock, error, strlen(error), 0);
+            }
         }
 
         // --- 2. USB → Telnet ---
@@ -141,6 +156,8 @@ static void handle_session(int sock)
             }
         }
     }
+    //----------------------------------------------------------
+    //----------------------------------------------------------
 
     ESP_LOGI(TAG, "Bridge session ended");
 }
