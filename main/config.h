@@ -19,7 +19,7 @@ typedef struct {
     char netmask[IP_ADDR_STR_LEN];
     char gateway[IP_ADDR_STR_LEN];
     uint16_t port;
-    char sespass[SESPASS_MAX_LEN];
+    char sespass[SESPASS_MAX_LEN + 1];
 } device_config_t;
 
 extern device_config_t g_config;

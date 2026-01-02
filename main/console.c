@@ -242,7 +242,7 @@ static int set_sespass_cmd(int argc, char **argv) {
         return 1;
     }
 
-    const char *pass = set_pass_args.pass->sval[0];
+    const char *pass = set_sespass_args.pass->sval[0];
     if (!is_valid_sespass(pass)) {
         printf("ERR: Password too long (max 64 chars)\n");
         return 1;
