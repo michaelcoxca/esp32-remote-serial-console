@@ -5,7 +5,7 @@
 #include "esp_log.h"
 #include "hal/usb_serial_jtag_ll.h"
 
-#define DEBUG_IO
+//#define TRACE_IO
 
 static const char* TAG = "usb";
 
@@ -23,7 +23,7 @@ int usb_write(const uint8_t *buf, uint32_t len) {
     const uint32_t TIMEOUT_MAX = 100; // avoid infinite loop (e.g., if HW stuck)
     const uint32_t TIMEOUT_MS  =  20; // avoid infinite loop (e.g., if HW stuck)
 
-#ifdef DEBUG_IO
+#ifdef TRACE_IO
     ESP_LOGI(TAG, "USB->Host %d bytes");
     ESP_LOG_BUFFER_HEXDUMP(TAG, buf, len, ESP_LOG_INFO);
 #endif
@@ -49,7 +49,7 @@ int usb_write(const uint8_t *buf, uint32_t len) {
 // Direct USB JTAG read, no interrupts, no driver.
 int usb_read(uint8_t *buf, uint32_t len) {
     int rx = usb_serial_jtag_ll_read_rxfifo(buf, len);
-#ifdef DEBUG_IO
+#ifdef TRACE_IO
     if (rx > 0) {
         ESP_LOGI(TAG, "USB<-Host %d bytes", rx);
         ESP_LOG_BUFFER_HEXDUMP(TAG, buf, rx, ESP_LOG_INFO);

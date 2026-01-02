@@ -7,10 +7,14 @@ The ESP32-C3 acts as a **network-to-serial bridge**: it connects to your target 
 
 ## Overview and features
 
-- **Hardware**: ESP32-C3 (built-in USB-JTAG + USB CDC)
-- **Target Console**: Connected to ESP32-C3 USB CDC native USB peripheral
+Flash the firmware into an ESP32-C3 board (Super Mini or Waveshare ESP32-C3-Zero).
+
+- **Hardware**: ESP32-C3 board (built-in USB-JTAG + USB CDC)
+- **Target Console**: Linux connected to ESP32-C3 USB CDC native USB peripheral
 - **Local Management**: UART0 used for device configuration & debugging
 - **Network Access**: Static IP Telnet server on configurable IP and port
+
+
 - **Low level USB CDC I/O**: Direct USB CDC read/write to avoid `usb_serial_jtag` driver (ESP-IDF v5.5.2 seems still buggy).
 - **Telnet negotiation support**: strips IAC/DO/WILL commands to keep terminal clean, disables local echo.
 - **Session password authentication**: Optional but recommended since the remote serial console could be left open. Bruteforce prevention.
@@ -18,7 +22,6 @@ The ESP32-C3 acts as a **network-to-serial bridge**: it connects to your target 
 
 
 ## Operation
-
 
 ### Use UART0 to monitor and configure
 
@@ -161,8 +164,6 @@ Error when you try to send bytes to Linux when ESP32 is not connected, or agetty
 ## Build and Flash
 
 Tested on ESP-IDF version: v5.5.2
-
-Flash the firmware into an ESP32-C3 board (Super Mini or Waveshare ESP32-C3-Zero).
 
 ```
 idf.py set-target esp32c3
