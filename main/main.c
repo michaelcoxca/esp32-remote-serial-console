@@ -35,7 +35,7 @@ void app_main(void) {
     // Keep main task alive (e.g., for background work)
     while (1) {
         //ESP_LOGI(TAG, "Idle");
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 

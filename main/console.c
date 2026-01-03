@@ -8,89 +8,92 @@
 #include "linenoise/linenoise.h"
 #include "argtable3/argtable3.h"
 #include "config.h"
-#include "console_settings.h"
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
 
-static int conf_cmd(int argc, char **argv);
-static int reboot_cmd(int argc, char **argv);
+#define CONSOLE_MAX_CMDLINE_ARGS 8
+#define CONSOLE_MAX_CMDLINE_LENGTH 256
+#define CONSOLE_PROMPT_MAX_LEN 32
 
+static char prompt[CONSOLE_PROMPT_MAX_LEN];
 static const char* TAG = "console";
 
-#define PROMPT_STR "esp"
+// ──────────────── Command handler macros (SAFE - just define functions) ────────────────
+#define DEFINE_SET_STR_CMD(cmd_name, validator_fn, saver_fn) \
+    static int cmd_name##_cmd(int argc, char **argv) { \
+        int nerr = arg_parse(argc, argv, (void**)&cmd_name##_args); \
+        if (nerr) { arg_print_errors(stderr, cmd_name##_args.end, argv[0]); return 1; } \
+        const char *input = cmd_name##_args.val->sval[0]; \
+        if (!validator_fn(input)) { \
+            printf("ERR: Invalid value\n"); \
+            return 1; \
+        } \
+        esp_err_t err = saver_fn(input); \
+        if (err != ESP_OK) { \
+            printf("ERR: NVS write failed (0x%x)\n", err); \
+            return 1; \
+        } \
+        printf("OK\n"); \
+        return 0; \
+    }
 
-// --- Argument structs for each command ---
-static struct {
-    struct arg_str *ssid;
-    struct arg_end *end;
-} set_ssid_args;
+#define DEFINE_SET_INT_CMD(cmd_name, min_val, max_val, saver_fn) \
+    static int cmd_name##_cmd(int argc, char **argv) { \
+        int nerr = arg_parse(argc, argv, (void**)&cmd_name##_args); \
+        if (nerr) { arg_print_errors(stderr, cmd_name##_args.end, argv[0]); return 1; } \
+        int val = cmd_name##_args.val->ival[0]; \
+        if (val < (min_val) || val > (max_val)) { \
+            printf("ERR: Value must be %d–%d\n", (min_val), (max_val)); \
+            return 1; \
+        } \
+        esp_err_t err = saver_fn((uint16_t)val); \
+        if (err != ESP_OK) { \
+            printf("ERR: NVS write failed (0x%x)\n", err); \
+            return 1; \
+        } \
+        printf("OK\n"); \
+        return 0; \
+    }
 
-static struct {
-    struct arg_str *pass;
-    struct arg_end *end;
-} set_pass_args;
+// ──────────────── Argtable structs (only declare, don't initialize) ────────────────
 
-static struct {
-    struct arg_str *ip;
-    struct arg_end *end;
-} set_ip_args;
+static struct { struct arg_str *val; struct arg_end *end; } set_ssid_args;
+static struct { struct arg_str *val; struct arg_end *end; } set_pass_args;
+static struct { struct arg_str *val; struct arg_end *end; } set_ip_args;
+static struct { struct arg_str *val; struct arg_end *end; } set_mask_args;
+static struct { struct arg_str *val; struct arg_end *end; } set_gw_args;
+static struct { struct arg_str *val; struct arg_end *end; } set_sespass_args;
+static struct { struct arg_int *val; struct arg_end *end; } set_port_args;
 
-static struct {
-    struct arg_str *mask;
-    struct arg_end *end;
-} set_mask_args;
+// ──────────────── Define command handlers using macros ────────────────
 
-static struct {
-    struct arg_str *gw;
-    struct arg_end *end;
-} set_gw_args;
+DEFINE_SET_STR_CMD(set_ssid,     is_valid_ssid,     config_save_ssid)
+DEFINE_SET_STR_CMD(set_pass,     is_valid_password, config_save_password)
+DEFINE_SET_STR_CMD(set_ip,       is_valid_ipv4,     config_save_ip)
+DEFINE_SET_STR_CMD(set_mask,     is_valid_ipv4,     config_save_netmask)
+DEFINE_SET_STR_CMD(set_gw,       is_valid_ipv4,     config_save_gateway)
+DEFINE_SET_STR_CMD(set_sespass,  is_valid_sespass,  config_save_sespass)
+DEFINE_SET_INT_CMD(set_port,     1, 65535,          config_save_port)
 
-static struct {
-    struct arg_int *port;
-    struct arg_end *end;
-} set_port_args;
+// ──────────────── Non-SET commands ────────────────
 
-static struct {
-    struct arg_str *pass;
-    struct arg_end *end;
-} set_sespass_args;
-
-// --- Command handlers ---
 static int conf_cmd(int argc, char **argv) {
-    // Reload config from NVS to show true persistent state
-    device_config_t temp_config;
-    memcpy(&temp_config, &g_config, sizeof(device_config_t)); // backup current RAM state
-
-    esp_err_t err = config_load(); // reload from NVS into g_config
-    if (err != ESP_OK) {
-        printf("Warning: Failed to reload config from NVS (using current RAM copy)\n");
-        // Optionally restore backup if you don't want g_config changed
-        // But usually, it's safe to keep the loaded state
+    if (config_load() != ESP_OK) {
+        printf("Warning: Using current RAM config (NVS reload failed)\n");
     }
 
-    bool is_configured = config_is_valid(); // This checks: ssid && password && ip
-
+    bool valid = config_is_valid();
     printf("=== Configuration Status ===\n");
-    if (is_configured) {
-        printf("Device is FULLY CONFIGURED and ready to connect.\n");
-    } else {
-        printf("Device is INCOMPLETELY CONFIGURED.\n");
-    }
-    printf("\n");
+    printf("%s\n\n", valid ? "Device is FULLY CONFIGURED" : "Device is INCOMPLETELY CONFIGURED");
 
-    printf("=== Configuration Values ===\n");    
-    printf("ssid:    %s\n", g_config.ssid[0] ? g_config.ssid : "(not set)");
+    printf("=== Configuration Values ===\n");
+    printf("ssid:    %s\n", g_config.ssid[0]  ? g_config.ssid  : "(not set)");
     printf("pass:    %s\n", g_config.password[0] ? "*** (set)" : "(not set)");
-    printf("ip:      %s\n", g_config.ip[0] ? g_config.ip : "(not set)");
+    printf("ip:      %s\n", g_config.ip[0]      ? g_config.ip   : "(not set)");
     printf("mask:    %s\n", g_config.netmask[0] ? g_config.netmask : "(not set)");
     printf("gw:      %s\n", g_config.gateway[0] ? g_config.gateway : "(not set)");
     printf("port:    %d\n", g_config.port);
     printf("sespass: %s\n", g_config.sespass[0] ? "*** (set)" : "(not set)");
-    return 0;
-}
-
-static int reset_cmd(int argc, char **argv) {
-    config_reset_to_factory();
-    printf("Factory reset done. Rebooting to apply.\n");
-    reboot_cmd(0, NULL);
     return 0;
 }
 
@@ -102,271 +105,118 @@ static int reboot_cmd(int argc, char **argv) {
     return 0;
 }
 
-// --- SET subcommands ---
-static int set_ssid_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_ssid_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_ssid_args.end, argv[0]);
-        return 1;
-    }
-
-    const char *ssid = set_ssid_args.ssid->sval[0];
-    if (!is_valid_ssid(ssid)) {
-        printf("ERR: SSID must be 1-32 chars\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_ssid(ssid);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed (0x%x)\n", err);
-        return 1;
-    }
-    printf("OK\n");
+static int reset_cmd(int argc, char **argv) {
+    config_reset_to_factory();
+    printf("Factory reset done. Rebooting to apply.\n");
+    reboot_cmd(0, NULL);
     return 0;
 }
 
-static int set_pass_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_pass_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_pass_args.end, argv[0]);
-        return 1;
-    }
+// ──────────────── Register commands (initialize argtable HERE) ────────────────
 
-    const char *pass = set_pass_args.pass->sval[0];
-    if (!is_valid_password(pass)) {
-        printf("ERR: Password too long (max 64 chars)\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_password(pass);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed\n");
-        return 1;
-    }
-    printf("OK\n");
-    return 0;
-}
-
-static int set_ip_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_ip_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_ip_args.end, argv[0]);
-        return 1;
-    }
-
-    const char *ip = set_ip_args.ip->sval[0];
-    if (!is_valid_ipv4(ip)) {
-        printf("ERR: Invalid IP address\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_ip(ip);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed\n");
-        return 1;
-    }
-    printf("OK\n");
-    return 0;
-}
-
-static int set_mask_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_mask_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_mask_args.end, argv[0]);
-        return 1;
-    }
-
-    const char *mask = set_mask_args.mask->sval[0];
-    if (!is_valid_ipv4(mask)) {
-        printf("ERR: Invalid netmask\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_netmask(mask);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed\n");
-        return 1;
-    }
-    printf("OK\n");
-    return 0;
-}
-
-static int set_gw_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_gw_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_gw_args.end, argv[0]);
-        return 1;
-    }
-
-    const char *gw = set_gw_args.gw->sval[0];
-    if (!is_valid_ipv4(gw)) {
-        printf("ERR: Invalid gateway IP\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_gateway(gw);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed\n");
-        return 1;
-    }
-    printf("OK\n");
-    return 0;
-}
-
-static int set_port_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_port_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_port_args.end, argv[0]);
-        return 1;
-    }
-
-    int port = set_port_args.port->ival[0];
-    if (port < 1 || port > 65535) {
-        printf("ERR: Port must be 1-65535\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_port((uint16_t)port);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed\n");
-        return 1;
-    }
-    printf("OK\n");
-    return 0;
-}
-
-static int set_sespass_cmd(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_sespass_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_sespass_args.end, argv[0]);
-        return 1;
-    }
-
-    const char *pass = set_sespass_args.pass->sval[0];
-    if (!is_valid_sespass(pass)) {
-        printf("ERR: Password too long (max 64 chars)\n");
-        return 1;
-    }
-
-    esp_err_t err = config_save_sespass(pass);
-    if (err != ESP_OK) {
-        printf("ERR: NVS write failed\n");
-        return 1;
-    }
-    printf("OK\n");
-    return 0;
-}
-
-// --- Register all commands ---
 void console_register_commands(void) {
-    // Register commands
-    const esp_console_cmd_t conf_cmd_cfg = {
-        .command = "conf",
-        .help = "Show current configuration",
-        .func = &conf_cmd,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&conf_cmd_cfg));
-
-    const esp_console_cmd_t reset_cmd_cfg = {
-        .command = "reset",
-        .help = "Reset to factory defaults",
-        .func = &reset_cmd,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&reset_cmd_cfg));
-
-    const esp_console_cmd_t reboot_cmd_cfg = {
-        .command = "reboot",
-        .help = "Reboot the device",
-        .func = &reboot_cmd,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&reboot_cmd_cfg));
-
-    // SET commands
-    set_ssid_args.ssid = arg_str1(NULL, NULL, "<ssid>", "WiFi SSID (1-32 chars)");
+    // Initialize argtable structs (MUST be done in function)
+    set_ssid_args.val = arg_str1(NULL, NULL, "<ssid>", "WiFi SSID (1-32 chars)");
     set_ssid_args.end = arg_end(1);
-    const esp_console_cmd_t set_ssid_cmd_cfg = {
-        .command = "ssid",
-        .help = "Set WiFi SSID",
-        .func = &set_ssid_cmd,
-        .argtable = &set_ssid_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_ssid_cmd_cfg));
 
-    set_pass_args.pass = arg_str1(NULL, NULL, "<pass>", "WiFi password (0-64 chars)");
+    set_pass_args.val = arg_str1(NULL, NULL, "<pass>", "WiFi password (0-64 chars)");
     set_pass_args.end = arg_end(1);
-    const esp_console_cmd_t set_pass_cmd_cfg = {
-        .command = "pass",
-        .help = "Set WiFi password",
-        .func = &set_pass_cmd,
-        .argtable = &set_pass_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_pass_cmd_cfg));
 
-    set_ip_args.ip = arg_str1(NULL, NULL, "<ip>", "Static IP address");
+    set_ip_args.val = arg_str1(NULL, NULL, "<ip>", "Static IP address");
     set_ip_args.end = arg_end(1);
-    const esp_console_cmd_t set_ip_cmd_cfg = {
-        .command = "ip",
-        .help = "Set static IP",
-        .func = &set_ip_cmd,
-        .argtable = &set_ip_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_ip_cmd_cfg));
 
-    set_mask_args.mask = arg_str1(NULL, NULL, "<mask>", "Network mask");
+    set_mask_args.val = arg_str1(NULL, NULL, "<mask>", "Network mask");
     set_mask_args.end = arg_end(1);
-    const esp_console_cmd_t set_mask_cmd_cfg = {
-        .command = "mask",
-        .help = "Set network mask",
-        .func = &set_mask_cmd,
-        .argtable = &set_mask_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mask_cmd_cfg));
 
-    set_gw_args.gw = arg_str1(NULL, NULL, "<gw>", "Gateway IP");
+    set_gw_args.val = arg_str1(NULL, NULL, "<gw>", "Gateway IP");
     set_gw_args.end = arg_end(1);
-    const esp_console_cmd_t set_gw_cmd_cfg = {
-        .command = "gw",
-        .help = "Set gateway IP",
-        .func = &set_gw_cmd,
-        .argtable = &set_gw_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_gw_cmd_cfg));
 
-    set_port_args.port = arg_int1(NULL, NULL, "<port>", "Listen port (1-65535)");
+    set_port_args.val = arg_int1(NULL, NULL, "<port>", "Listen port (1-65535)");
     set_port_args.end = arg_end(1);
-    const esp_console_cmd_t set_port_cmd_cfg = {
-        .command = "port",
-        .help = "Set listen port",
-        .func = &set_port_cmd,
-        .argtable = &set_port_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_port_cmd_cfg));
 
-    set_sespass_args.pass = arg_str1(NULL, NULL, "<password>", "Console session password (0-64 chars, empty to disable)");
+    set_sespass_args.val = arg_str1(NULL, NULL, "<password>", "Session password (0-64 chars, empty to disable)");
     set_sespass_args.end = arg_end(1);
-    const esp_console_cmd_t set_sespass_cmd_cfg = {
-        .command = "sespass",
-        .help = "Set console session password",
-        .func = &set_sespass_cmd,
-        .argtable = &set_sespass_args
+
+    // Register commands
+    const esp_console_cmd_t cmds[] = {
+        { .command = "conf",     .help = "Show current configuration",    .func = conf_cmd },
+        { .command = "reset",    .help = "Reset to factory defaults",     .func = reset_cmd },
+        { .command = "reboot",   .help = "Reboot the device",             .func = reboot_cmd },
+        { .command = "ssid",     .help = "Set WiFi SSID",                 .func = set_ssid_cmd,     .argtable = &set_ssid_args },
+        { .command = "pass",     .help = "Set WiFi password",             .func = set_pass_cmd,     .argtable = &set_pass_args },
+        { .command = "ip",       .help = "Set static IP",                 .func = set_ip_cmd,       .argtable = &set_ip_args },
+        { .command = "mask",     .help = "Set network mask",              .func = set_mask_cmd,     .argtable = &set_mask_args },
+        { .command = "gw",       .help = "Set gateway IP",                .func = set_gw_cmd,       .argtable = &set_gw_args },
+        { .command = "port",     .help = "Set listen port",               .func = set_port_cmd,     .argtable = &set_port_args },
+        { .command = "sespass",  .help = "Set console session password",  .func = set_sespass_cmd,  .argtable = &set_sespass_args },
     };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_sespass_cmd_cfg));
 
+    for (size_t i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++) {
+        ESP_ERROR_CHECK(esp_console_cmd_register(&cmds[i]));
+    }
 
-    // Force register help
     esp_console_register_help_command();
 }
 
-// Main console task
+// ──────────────── Initialization ────────────────
+
+void initialize_console_peripheral(void) {
+    fflush(stdout);
+    fsync(fileno(stdout));
+    setvbuf(stdin, NULL, _IONBF, 0);
+
+    uart_vfs_dev_port_set_rx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CR);
+    uart_vfs_dev_port_set_tx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CRLF);
+
+    uart_config_t uart_config = {
+        .baud_rate  = CONFIG_ESP_CONSOLE_UART_BAUDRATE,
+        .data_bits  = UART_DATA_8_BITS,
+        .parity     = UART_PARITY_DISABLE,
+        .stop_bits  = UART_STOP_BITS_1,
+        .source_clk = UART_SCLK_XTAL,
+    };
+
+    ESP_ERROR_CHECK(uart_driver_install(CONFIG_ESP_CONSOLE_UART_NUM, 256, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(CONFIG_ESP_CONSOLE_UART_NUM, &uart_config));
+    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+}
+
+void initialize_console_library(void) {
+    esp_console_config_t console_config = {
+        .max_cmdline_args = CONSOLE_MAX_CMDLINE_ARGS,
+        .max_cmdline_length = CONSOLE_MAX_CMDLINE_LENGTH,
+    };
+    ESP_ERROR_CHECK(esp_console_init(&console_config));
+
+    linenoiseSetMultiLine(1);
+    linenoiseSetCompletionCallback(&esp_console_get_completion);
+    linenoiseSetHintsCallback((linenoiseHintsCallback*)&esp_console_get_hint);
+    linenoiseHistorySetMaxLen(100);
+    linenoiseSetMaxLineLen(console_config.max_cmdline_length);
+    linenoiseAllowEmpty(false);
+
+    if (linenoiseProbe()) {
+        ESP_LOGW(TAG, "Terminal lacks escape support. Line editing disabled.");
+        linenoiseSetDumbMode(1);
+    }
+}
+
+char *setup_prompt(const char *base) {
+    const char *p = base ? base : "esp>";
+    if (linenoiseIsDumbMode()) {
+        snprintf(prompt, sizeof(prompt), "%s ", p);
+    } else {
+        snprintf(prompt, sizeof(prompt), LOG_COLOR_I "%s " LOG_RESET_COLOR, p);
+    }
+    return prompt;
+}
+
 void console_task(void *arg) {
     initialize_console_peripheral();
     initialize_console_library();
-    
-    // Register all commands (defined in console.c)
     console_register_commands();
 
-    /* Set up prompt */
-    const char* prompt = setup_prompt(PROMPT_STR ">");
+    char *prompt_str = setup_prompt("esp>");
 
     printf("\n=== ESP32 Console Ready ===\n");
     if (!config_is_valid()) {
@@ -376,34 +226,25 @@ void console_task(void *arg) {
     printf("Type 'help' to see available commands.\n\n");
 
     if (linenoiseIsDumbMode()) {
-        printf("\n"
-               "Your terminal application does not support escape sequences.\n"
-               "Line editing and history features are disabled.\n"
-               "On Windows, try using Windows Terminal or Putty instead.\n\n");
+        printf("\nDumb terminal. Line editing/history disabled.\n\n");
     }
 
-    // REPL loop (runs forever in this task)
-    /* Main loop */
-    while(true) {
-        char* line = linenoise(prompt);
-        if (line == NULL) {
-            continue;
-        }
+    while (true) {
+        char *line = linenoise(prompt_str);
+        if (!line) continue;
 
-        /* Add the command to the history if not empty */
         if (strlen(line) > 0) {
             linenoiseHistoryAdd(line);
         }
 
-        /* Try to run the command */
         int ret;
         esp_err_t err = esp_console_run(line, &ret);
         if (err == ESP_ERR_NOT_FOUND) {
             printf("Unrecognized command\n");
         } else if (err == ESP_ERR_INVALID_ARG) {
-            // command was empty
+            // ignore empty
         } else if (err == ESP_OK && ret != ESP_OK) {
-            printf("Command returned non-zero error code: 0x%x (%s)\n", ret, esp_err_to_name(ret));
+            printf("Command error: 0x%x (%s)\n", ret, esp_err_to_name(ret));
         } else if (err != ESP_OK) {
             printf("Internal error: %s\n", esp_err_to_name(err));
         }
@@ -411,6 +252,6 @@ void console_task(void *arg) {
         linenoiseFree(line);
     }
 
-    ESP_LOGE(TAG, "Error or end-of-input, terminating console");
     esp_console_deinit();
+    vTaskDelete(NULL);
 }

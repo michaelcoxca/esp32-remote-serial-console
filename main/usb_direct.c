@@ -24,7 +24,7 @@ int usb_write(const uint8_t *buf, uint32_t len) {
     const uint32_t TIMEOUT_MS  =  20; // avoid infinite loop (e.g., if HW stuck)
 
 #ifdef TRACE_IO
-    ESP_LOGI(TAG, "USB->Host %d bytes");
+    ESP_LOGI(TAG, "USB->Host %d bytes", len);
     ESP_LOG_BUFFER_HEXDUMP(TAG, buf, len, ESP_LOG_INFO);
 #endif
 

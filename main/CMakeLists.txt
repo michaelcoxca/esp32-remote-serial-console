@@ -2,7 +2,6 @@ idf_component_register(SRCS
                             "main.c"
                             "config.c"
                             "console.c"
-                            "console_settings.c"
                             "wifi_manager.c"
                             "tcp_server.c"
                             "usb_direct.c"
