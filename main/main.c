@@ -8,6 +8,7 @@
 #include "console.h"
 #include "wifi_manager.h"
 #include "tcp_server.h"
+#include "usb_direct.h"
 
 
 static const char* TAG = "main";
@@ -16,7 +17,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "Running");
 
     config_init();
-
+    usb_clear_buffers();
+    
     if (xTaskCreate(console_task, "console", 8192, NULL, 1, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create console task");
     }
