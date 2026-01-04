@@ -231,7 +231,6 @@ void config_init(void) {
     if (missing_defaults) {
         ESP_LOGI(TAG, "Missing default values — restoring factory defaults");
         config_reset_to_factory(); // This saves port, gw, mask to NVS
-        // config_reset_to_factory() already sets g_config + saves to NVS
     }
 }
 

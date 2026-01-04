@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/uart.h"
-#include "esp_vfs_dev.h"
 #include "esp_log.h"
 
 #include "config.h"
@@ -14,39 +12,25 @@
 
 static const char* TAG = "main";
 
-
 void app_main(void) {
     ESP_LOGI(TAG, "Running");
 
-    // Initialize NVS and config
     config_init();
-    xTaskCreate(console_task, "console", 6144, NULL, tskIDLE_PRIORITY + 3, NULL);
 
-    // Start Wi-Fi if config is valid
+    if (xTaskCreate(console_task, "console", 8192, NULL, 1, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create console task");
+    }
+
     if (config_is_valid()) {
-        ESP_LOGI(TAG, "Config is valid: starting console server");
+        ESP_LOGI(TAG, "Valid config found - starting Wi-Fi and TCP server");
         wifi_manager_start();
         tcp_server_start();
-    }
-    else {
-        ESP_LOGW(TAG, "Device is not configured yet.");
+    } else {
+        ESP_LOGW(TAG, "No valid config - device unprovisioned");
     }
 
-    // Keep main task alive (e.g., for background work)
-    while (1) {
-        //ESP_LOGI(TAG, "Idle");
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
+    vTaskDelete(NULL);
 }
-
-
-
-
-
-
-
-
-
 
 
 

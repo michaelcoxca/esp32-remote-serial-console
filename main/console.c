@@ -18,7 +18,7 @@
 static char prompt[CONSOLE_PROMPT_MAX_LEN];
 static const char* TAG = "console";
 
-// ──────────────── Command handler macros (SAFE - just define functions) ────────────────
+// ---------------- Command handler macros (SAFE - just define functions) ----------------
 #define DEFINE_SET_STR_CMD(cmd_name, validator_fn, saver_fn) \
     static int cmd_name##_cmd(int argc, char **argv) { \
         int nerr = arg_parse(argc, argv, (void**)&cmd_name##_args); \
@@ -55,7 +55,7 @@ static const char* TAG = "console";
         return 0; \
     }
 
-// ──────────────── Argtable structs (only declare, don't initialize) ────────────────
+// ---------------- Argtable structs (only declare, don't initialize) ----------------
 
 static struct { struct arg_str *val; struct arg_end *end; } set_ssid_args;
 static struct { struct arg_str *val; struct arg_end *end; } set_pass_args;
@@ -65,7 +65,7 @@ static struct { struct arg_str *val; struct arg_end *end; } set_gw_args;
 static struct { struct arg_str *val; struct arg_end *end; } set_sespass_args;
 static struct { struct arg_int *val; struct arg_end *end; } set_port_args;
 
-// ──────────────── Define command handlers using macros ────────────────
+// ---------------- Define command handlers using macros ----------------
 
 DEFINE_SET_STR_CMD(set_ssid,     is_valid_ssid,     config_save_ssid)
 DEFINE_SET_STR_CMD(set_pass,     is_valid_password, config_save_password)
@@ -75,7 +75,7 @@ DEFINE_SET_STR_CMD(set_gw,       is_valid_ipv4,     config_save_gateway)
 DEFINE_SET_STR_CMD(set_sespass,  is_valid_sespass,  config_save_sespass)
 DEFINE_SET_INT_CMD(set_port,     1, 65535,          config_save_port)
 
-// ──────────────── Non-SET commands ────────────────
+// ---------------- Non-SET commands ----------------
 
 static int conf_cmd(int argc, char **argv) {
     if (config_load() != ESP_OK) {
@@ -112,7 +112,7 @@ static int reset_cmd(int argc, char **argv) {
     return 0;
 }
 
-// ──────────────── Register commands (initialize argtable HERE) ────────────────
+// ---------------- Register commands (initialize argtable HERE) ----------------
 
 void console_register_commands(void) {
     // Initialize argtable structs (MUST be done in function)
@@ -158,7 +158,7 @@ void console_register_commands(void) {
     esp_console_register_help_command();
 }
 
-// ──────────────── Initialization ────────────────
+// ---------------- Initialization ----------------
 
 void initialize_console_peripheral(void) {
     fflush(stdout);
