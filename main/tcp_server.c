@@ -67,6 +67,7 @@ static int telnet_recv_byte(int sock, int timeout_sec) {
     uint8_t c;
     int ret = recv(sock, &c, 1, 0);
     if (ret <= 0) return -1;
+    //ESP_LOGI(TAG, "Sock received byte: %02x", c);
     return (int)c;
 }
 
@@ -248,11 +249,54 @@ static void handle_session(int sock) {
             if (result < 0) continue;
 
             c = result;
-            if (c == TELNET_CR) continue; // Suppress CR to avoid double newline
 
-            if (usb_write((uint8_t*)&c, 1) != 1) {
-                const char err[] = "\r\n--- Remote end not listening ---\r\n";
-                send(sock, err, strlen(err), 0);
+            // --- Line-ending normalization ---
+            static bool prev_was_cr = false;
+            uint8_t out_byte = 0;
+            bool emit = false;
+
+            if (prev_was_cr) {
+                prev_was_cr = false;
+                if (c == TELNET_LF || c == 0) {
+                    // CR LF or CR NUL -> LF
+                    out_byte = TELNET_LF;
+                    emit = true;
+                } else {
+                    // CR followed by something else: treat CR as LF, and reprocess current char
+                    // Emit LF first
+                    out_byte = TELNET_LF;
+                    emit = true;
+                    // And now reprocess 'c' in next iteration
+                    if (usb_write(&out_byte, 1) != 1) {
+                        const char err[] = "\r\n--- Remote end not listening ---\r\n";
+                        send(sock, err, strlen(err), 0);
+                    }
+                    // Now treat 'c' as a fresh input byte
+                    // (fall through to normal processing below)
+                }
+            }
+
+            if (!emit) {
+                if (c == TELNET_CR) {
+                    prev_was_cr = true;
+                    continue; // don't emit yet
+                } else if (c == TELNET_LF) {
+                    out_byte = TELNET_LF;
+                    emit = true;
+                } else if (c == 0) {
+                    out_byte = TELNET_LF;
+                    emit = true;
+                } else {
+                    out_byte = (uint8_t)c;
+                    emit = true;
+                }
+            }
+
+            if (emit) {
+                if (usb_write(&out_byte, 1) != 1) {
+                    const char err[] = "\r\n--- Remote end not listening ---\r\n";
+                    send(sock, err, strlen(err), 0);
+                }
             }
         }
 
