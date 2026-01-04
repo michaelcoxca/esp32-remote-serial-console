@@ -12,7 +12,6 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 
-
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
@@ -20,7 +19,6 @@
 
 #include "config.h"
 #include "usb_direct.h"
-
 
 // Telnet protocol constants
 #define TELNET_IAC       255
@@ -37,231 +35,149 @@
 #define TELNET_CR        13
 #define TELNET_LF        10
 
-#define USB_BUF_SIZE     64    // we will read/write in 64 bytes chunks
+#define USB_BUF_SIZE     64    // USB I/O chunk size
 
-#define KEEPALIVE_IDLE     5    // Start probing after X seconds of inactivity
-#define KEEPALIVE_INTERVAL 1    // Send a probe every X seconds
-#define KEEPALIVE_COUNT    5    // Drop connection after X failed probes
-#define NODELAY_FLAG       1    // Disable Nagle’s algorithm
+#define KEEPALIVE_IDLE     5    // Start keepalive after X sec idle
+#define KEEPALIVE_INTERVAL 1    // Probe every X sec
+#define KEEPALIVE_COUNT    5    // Fail after X probes
+#define NODELAY_FLAG       1    // Disable Nagle
 
 #define MAX_ATTEMPTS 3
-#define LOCK_TIME_SEC 60  // 1 minute
-
+#define LOCK_TIME_SEC 60  // Lockout duration (seconds)
 
 static const char *TAG = "tcp_server";
 
 static struct {
-    uint8_t attempts;        // Consecutive failed attempts
-    uint32_t lock_until_sec; // Uptime timestamp when lock expires
+    uint8_t attempts;
+    uint32_t lock_until_sec;
 } s_auth_state = {0};
 
+// ========================
+// Telnet Utility Helpers
+// ========================
 
-
-// This is the main bridge function you were looking for ;)
-static void handle_session(int sock)
-{
-    uint8_t usb_buf[USB_BUF_SIZE];
-
-    const char banner[] = "\r\n--- Remote console open ---\r\n"
-                          "(Telnet EOF or disconnect to close session)\r\n\r\n";
-    send(sock, banner, strlen(banner), 0);
-
-    ESP_LOGI(TAG, "Bridge session started");
-
-    //----------------------------------------------------------
-    // Main IO loop
-    // Notice that Telnet → USB is 1 character at a time.
-    // Far from optimal. But simpler and enough for a serial console.
-    //----------------------------------------------------------
-    while (1) {
-        fd_set readset;
-        FD_ZERO(&readset);
-        FD_SET(sock, &readset);
-        struct timeval tv = { .tv_sec = 0, .tv_usec = 10000 };
-
-        int activity = select(sock + 1, &readset, NULL, NULL, &tv);
-        if (activity < 0) {
-            ESP_LOGE(TAG, "Select failed");
-            break;
-        }
-
-        // --- 1. Telnet → USB
-        if (FD_ISSET(sock, &readset)) {
-            uint8_t c;
-            if (recv(sock, &c, 1, 0) <= 0) {
-                ESP_LOGI(TAG, "Client disconnected (TCP close)");
-                break;
-            }
-            
-            // IAC handling: supress garbage
-            if (c == TELNET_IAC) {
-                uint8_t cmd;
-                if (recv(sock, &cmd, 1, 0) <= 0) continue;
-
-                // Handle special Telnet commands
-                if (cmd == TELNET_IAC) {
-                    // Escaped 0xFF → forward as data
-                    c = TELNET_IAC;
-                }
-                else if (cmd == TELNET_EOF) {
-                    // Graceful shutdown request
-                    ESP_LOGI(TAG, "Received Telnet EOF — closing session");
-                    send(sock, "\r\n[Session closed by EOF]\r\n", 31, 0);
-                    break;
-                }
-                else if (cmd == TELNET_SB) {
-                    // Skip subnegotiation
-                    uint8_t prev = 0, b;
-                    while (recv(sock, &b, 1, 0) > 0) {
-                        if (prev == TELNET_IAC && b == TELNET_SE) break;
-                        prev = b;
-                    }
-                    continue;
-                }
-                else if (cmd == TELNET_WILL || cmd == TELNET_WONT ||
-                         cmd == TELNET_DO   || cmd == TELNET_DONT) {
-                    uint8_t opt;
-                    recv(sock, &opt, 1, 0);
-                    continue;
-                }
-                else {
-                    // Other IAC: discard (e.g., NOP, BRK, AYT)
-                    continue;
-                }
-            // CR LF handling: supress CR to prevent double "enter"
-            } else if (c == TELNET_CR) {
-                continue;
-            }
-
-            // Forward data to USB
-            if (usb_write(&c, 1) != 1) {
-                const char error[] = "\r\n--- Remote end not listening ---\r\n";
-                send(sock, error, strlen(error), 0);
-            }
-        }
-
-        // --- 2. USB → Telnet ---
-        int total = 0;
-        while (1) {
-            int rx = usb_read(usb_buf, USB_BUF_SIZE);
-            if (rx <= 0) break;
-
-            send(sock, usb_buf, rx, 0);
-            total += rx;
-
-            // Safety: avoid infinite loop if USB floods
-            if (total > 2048) {
-                ESP_LOGW(TAG, "USB flood: >2KB read in one poll");
-                break;
-            }
-        }
+// Reads one byte with optional timeout (in seconds).
+// Returns -1 on error/timeout, 0-255 on success.
+static int telnet_recv_byte(int sock, int timeout_sec) {
+    if (timeout_sec >= 0) {
+        struct timeval tv = { .tv_sec = timeout_sec, .tv_usec = 0 };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
-    //----------------------------------------------------------
-    //----------------------------------------------------------
 
-    ESP_LOGI(TAG, "Bridge session ended");
+    uint8_t c;
+    int ret = recv(sock, &c, 1, 0);
+    if (ret <= 0) return -1;
+    return (int)c;
 }
 
+// Processes a Telnet byte. Returns:
+//   -2 --> session should terminate (e.g., EOF)
+//   -1 --> skip (handled internally)
+// 0-255 --> data byte to forward
+static int process_telnet_byte(int sock, uint8_t c) {
+    if (c != TELNET_IAC) {
+        return (int)c;
+    }
 
-static void handle_telnet_command(int sock)
-{
-    uint8_t cmd;
-    if (recv(sock, &cmd, 1, 0) <= 0) return;
+    int cmd = telnet_recv_byte(sock, 5);
+    if (cmd < 0) return -1;
 
     if (cmd == TELNET_IAC) {
-        // Escaped 0xFF — treat as data
-        return;
+        return TELNET_IAC; // Escaped 0xFF
+    }
+
+    if (cmd == TELNET_EOF) {
+        ESP_LOGI(TAG, "Received Telnet EOF -- closing session");
+        const char msg[] = "\r\n[Session closed by EOF]\r\n";
+        send(sock, msg, strlen(msg), 0);
+        return -2;
     }
 
     if (cmd == TELNET_SB) {
         // Skip subnegotiation until IAC SE
-        uint8_t prev = 0, b;
-        while (recv(sock, &b, 1, 0) > 0) {
+        int prev = 0;
+        int b;
+        while ((b = telnet_recv_byte(sock, 5)) >= 0) {
             if (prev == TELNET_IAC && b == TELNET_SE) break;
             prev = b;
         }
-        return;
+        return -1;
     }
 
     if (cmd == TELNET_WILL || cmd == TELNET_WONT ||
         cmd == TELNET_DO   || cmd == TELNET_DONT) {
-        uint8_t option;
-        if (recv(sock, &option, 1, 0) <= 0) return;
+        int opt = telnet_recv_byte(sock, 5);
+        if (opt < 0) return -1;
 
-        // Only respond to ECHO and SGA to enable server-controlled echo
-        if (option == TELNET_ECHO || option == TELNET_SGA) {
+        // Only respond to ECHO and SGA
+        if (opt == TELNET_ECHO || opt == TELNET_SGA) {
             uint8_t resp[3] = {
                 TELNET_IAC,
                 (cmd == TELNET_DO || cmd == TELNET_DONT) ? TELNET_WILL : TELNET_DO,
-                option
+                (uint8_t)opt
             };
             send(sock, resp, 3, 0);
         }
-        // Ignore other options (no response = WONT/DONT)
+        return -1;
     }
+
+    // Ignore other IAC commands (NOP, BRK, AYT, etc.)
+    return -1;
 }
 
+// ========================
+// Authentication
+// ========================
 
-static bool authenticate_client(int sock)
-{
+static bool authenticate_client(int sock) {
     const uint32_t now = esp_timer_get_time() / 1000000ULL;
-    const uint32_t uptime_now = now; // alias for clarity
 
-    // --- Check if currently locked ---
+    // Check lockout
     if (s_auth_state.attempts >= MAX_ATTEMPTS) {
         if (now < s_auth_state.lock_until_sec) {
             uint32_t remaining = s_auth_state.lock_until_sec - now;
-            ESP_LOGW(TAG, "Auth: LOCKED - %d attempts, retry in %d sec", 
-                     s_auth_state.attempts, remaining);
+            ESP_LOGW(TAG, "Auth: LOCKED - retry in %d sec", remaining);
             char msg[64];
-            snprintf(msg, sizeof(msg), "\r\nToo many attempts. Try again in %ld seconds.\r\n", remaining);
+            snprintf(msg, sizeof(msg), "\r\nToo many attempts. Try again in %ld seconds.\r\n", (long)remaining);
             send(sock, msg, strlen(msg), 0);
             return false;
-        } else {
-            // Lock expired — reset
-            ESP_LOGI(TAG, "Auth: Lock expired (%d sec passed). Resetting attempt counter.", 
-                     LOCK_TIME_SEC);
-            s_auth_state.attempts = 0;
         }
+        // Lock expired: reset
+        ESP_LOGI(TAG, "Auth: Lock expired. Resetting counter.");
+        s_auth_state.attempts = 0;
     }
 
-    ESP_LOGI(TAG, "Auth: Prompting for password (attempts so far: %d)", s_auth_state.attempts);
-    const char prompt[] = "Password: ";
-    send(sock, prompt, strlen(prompt), 0);
+    ESP_LOGI(TAG, "Auth: Prompting (attempts: %d)", s_auth_state.attempts);
+    send(sock, "Password: ", 10, 0);
 
     char password[64] = {0};
     size_t idx = 0;
     const char asterisk = '*';
 
     while (1) {
-        uint8_t c;
-        struct timeval timeout = { .tv_sec = 30, .tv_usec = 0 };
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        int c = telnet_recv_byte(sock, 30);
+        if (c < 0) {
+            ESP_LOGW(TAG, "Auth: TIMEOUT");
+            goto auth_fail;
+        }
 
-        int ret = recv(sock, &c, 1, 0);
-        if (ret <= 0) {
-            s_auth_state.attempts++;
-            if (s_auth_state.attempts >= MAX_ATTEMPTS) {
-                s_auth_state.lock_until_sec = uptime_now + LOCK_TIME_SEC;
-                ESP_LOGW(TAG, "Auth: TIMEOUT counted as failed attempt #%d → LOCKING for %d sec",
-                         s_auth_state.attempts, LOCK_TIME_SEC);
-            } else {
-                ESP_LOGW(TAG, "Auth: TIMEOUT - failed attempt #%d", s_auth_state.attempts);
-            }
+        int result = process_telnet_byte(sock, (uint8_t)c);
+        if (result == -2) {
+            // EOF during auth: treat as disconnect
             return false;
         }
-
-        if (c == TELNET_IAC) {
-            handle_telnet_command(sock);
+        if (result < 0) {
             continue;
         }
+
+        c = result;
 
         if (c == '\r' || c == '\n') {
             send(sock, "\r\n", 2, 0);
             break;
         }
 
-        if (c == 0x7F || c == 0x08) {
+        if (c == 0x7F || c == 0x08) { // Backspace / DEL
             if (idx > 0) {
                 idx--;
                 send(sock, "\b \b", 3, 0);
@@ -282,27 +198,87 @@ static bool authenticate_client(int sock)
 
     if (success) {
         s_auth_state.attempts = 0;
-        ESP_LOGI(TAG, "Auth: SUCCESS - password accepted, counter reset");
+        ESP_LOGI(TAG, "Auth: SUCCESS");
         return true;
-    } else {
-        s_auth_state.attempts++;
-        if (s_auth_state.attempts >= MAX_ATTEMPTS) {
-            s_auth_state.lock_until_sec = uptime_now + LOCK_TIME_SEC;
-            ESP_LOGW(TAG, "Auth: FAILED attempt #%d → LOCKING for %d seconds", 
-                     s_auth_state.attempts, LOCK_TIME_SEC);
-        } else {
-            ESP_LOGW(TAG, "Auth: FAILED attempt #%d (max %d)", 
-                     s_auth_state.attempts, MAX_ATTEMPTS);
-        }
-        send(sock, "\r\nAccess denied.\r\n", 19, 0);
-        return false;
     }
+
+auth_fail:
+    s_auth_state.attempts++;
+    if (s_auth_state.attempts >= MAX_ATTEMPTS) {
+        s_auth_state.lock_until_sec = now + LOCK_TIME_SEC;
+        ESP_LOGW(TAG, "Auth: FAILED #%d -> LOCKING", s_auth_state.attempts);
+    } else {
+        ESP_LOGW(TAG, "Auth: FAILED #%d", s_auth_state.attempts);
+    }
+    send(sock, "\r\nAccess denied.\r\n", 19, 0);
+    return false;
 }
 
+// ========================
+// Main Session Loop
+// ========================
 
-static void handle_client_secure(int sock)
-{
-    // Request server-controlled echo (raw mode)
+static void handle_session(int sock) {
+    const char banner[] = "\r\n--- Remote console open ---\r\n"
+                          "(Telnet EOF or disconnect to close session)\r\n\r\n";
+    send(sock, banner, strlen(banner), 0);
+    ESP_LOGI(TAG, "Bridge session started");
+
+    while (1) {
+        fd_set readset;
+        FD_ZERO(&readset);
+        FD_SET(sock, &readset);
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 10000 };
+        int activity = select(sock + 1, &readset, NULL, NULL, &tv);
+        if (activity < 0) {
+            ESP_LOGE(TAG, "Select failed");
+            break;
+        }
+
+        // Telnet -> USB
+        if (FD_ISSET(sock, &readset)) {
+            int c = telnet_recv_byte(sock, 0);
+            if (c < 0) {
+                ESP_LOGI(TAG, "Client disconnected (TCP close)");
+                break;
+            }
+
+            int result = process_telnet_byte(sock, (uint8_t)c);
+            if (result == -2) break; // EOF
+            if (result < 0) continue;
+
+            c = result;
+            if (c == TELNET_CR) continue; // Suppress CR to avoid double newline
+
+            if (usb_write((uint8_t*)&c, 1) != 1) {
+                const char err[] = "\r\n--- Remote end not listening ---\r\n";
+                send(sock, err, strlen(err), 0);
+            }
+        }
+
+        // USB -> Telnet
+        uint8_t usb_buf[USB_BUF_SIZE];
+        int total = 0;
+        while (total < 2048) {
+            int rx = usb_read(usb_buf, USB_BUF_SIZE);
+            if (rx <= 0) break;
+            send(sock, usb_buf, rx, 0);
+            total += rx;
+        }
+        if (total >= 2048) {
+            ESP_LOGW(TAG, "USB flood: >2KB in one poll");
+        }
+    }
+
+    ESP_LOGI(TAG, "Bridge session ended");
+}
+
+// ========================
+// Client Entry Point
+// ========================
+
+static void handle_client_secure(int sock) {
+    // Request server-controlled echo and suppress go-ahead
     uint8_t negotiation[] = {
         TELNET_IAC, TELNET_WILL, TELNET_ECHO,
         TELNET_IAC, TELNET_WILL, TELNET_SGA
@@ -315,13 +291,15 @@ static void handle_client_secure(int sock)
     if (g_config.sespass[0] == '\0' || authenticate_client(sock)) {
         handle_session(sock);
     }
+
+    shutdown(sock, SHUT_RDWR);
+    close(sock);
 }
 
-// -------------------------------
-// Original server task (updated)
-// -------------------------------
-static void tcp_server_task(void *pvParameters)
-{
+// ========================
+// Server Task
+// ========================
+static void tcp_server_task(void *pvParameters) {
     char addr_str[128];
     int addr_family = (int)pvParameters;
     int ip_protocol = 0;
@@ -360,7 +338,7 @@ static void tcp_server_task(void *pvParameters)
 
     err = listen(listen_sock, 1);
     if (err != 0) {
-        ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
+        ESP_LOGE(TAG, "Error during listen: errno %d", errno);
         goto CLEAN_UP;
     }
 
@@ -375,23 +353,20 @@ static void tcp_server_task(void *pvParameters)
             break;
         }
 
-        // Apply keep-alive and nodelay
+        // Apply socket options
         setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
         setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(int));
 
-        // Convert IP to string
+        // Log client IP
         if (source_addr.ss_family == PF_INET) {
             inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
         }
         ESP_LOGI(TAG, "Socket accepted ip address: %s", addr_str);
 
         handle_client_secure(sock);
-
-        shutdown(sock, SHUT_RDWR);
-        close(sock);
     }
 
 CLEAN_UP:
@@ -399,14 +374,12 @@ CLEAN_UP:
     vTaskDelete(NULL);
 }
 
-// -------------------------------
-// Public start function
-// -------------------------------
-void tcp_server_start(void)
-{
+// ========================
+// Public Start Function
+// ========================
+void tcp_server_start(void) {
     ESP_LOGI(TAG, "Starting Telnet server...");
     ESP_ERROR_CHECK(esp_netif_init());
 
-    // Pass AF_INET as parameter (your original pattern)
     xTaskCreate(tcp_server_task, "tcp_server", 4096, (void*)AF_INET, 5, NULL);
 }
