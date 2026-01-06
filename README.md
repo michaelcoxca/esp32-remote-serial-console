@@ -7,23 +7,20 @@ The ESP32-C3 acts as a **network-to-serial bridge**: it connects to your target 
 
 ## Overview and features
 
-Flash the firmware into an ESP32-C3 board (Super Mini or Waveshare ESP32-C3-Zero).
+Suitable for ESP32-C3 boards with native USB-Serial bridge (Super Mini or Waveshare ESP32-C3-Zero).
 
-- **Hardware**: ESP32-C3 board (built-in USB-JTAG + USB CDC)
-- **Target Console**: Linux connected to ESP32-C3 USB CDC native USB peripheral
-- **Local Management**: UART0 used for device configuration & debugging
-- **Network Access**: Static IP Telnet server on configurable IP and port
-
-
-- **Low level USB CDC I/O**: Direct USB CDC read/write to avoid `usb_serial_jtag` driver (ESP-IDF v5.5.2 seems still buggy).
-- **Telnet negotiation support**: strips IAC/DO/WILL commands to keep terminal clean, disables local echo.
-- **Session password authentication**: Optional but recommended since the remote serial console could be left open. Bruteforce prevention.
-- **Newline translation**: translates Telnet newline (CR LF) into serial newline (LF).
+- **Local Management**: Use UART0 for device configuration & debugging
+- **Static IP** Telnet server on configurable IP and port
+- **Low level USB CDC I/O** to avoid `usb_serial_jtag` driver (ESP-IDF v5.5.2 seems still buggy).
+- **Telnet server**: support negotiation to supress local echo. Strips IAC/DO/WILL commands to keep terminal clean. Handles all Telnet newlines (LF, CR-LF, CR-NUL).
+- **Session authentication**: Password optional but recommended since the remote serial console could be left open.
 
 
 ## Operation
 
-### Use UART0 to monitor and configure
+### Monitor and configure
+
+Connect to UART0.
 
 ```
 W (302) main: Device is not configured yet.
@@ -48,8 +45,6 @@ Type 'help' to see available commands.
 esp>
 ```
 
-Default password is **secret**.
-
 Configure options:
 
 ```
@@ -65,11 +60,11 @@ esp> reboot
 Rebooting...
 ```
 
-Set **sespass** to "" to disable it.
+Default password is **secret**. Set `sespass` to "" to disable it.
 
-Check connection logs, etc.
+After reboot, check WiFi connection logs, etc.
 
-Check configuration:
+You can reconfigure options at any moment. To show  current configuration:
 
 ```
 esp> conf
@@ -86,10 +81,7 @@ port:    23
 sespass: *** (set)
 ```
 
-You can reconfigure options at any moment.
-
-
-### Spawn a terminal in the Linux box
+### Spawn a terminal in the Linux box (for testing)
 
 Plug the board to the Linux box.
 
@@ -115,6 +107,51 @@ Spawn a serial console:
   $(basename $(readlink /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*))\
   linux
 ```
+
+### Setup a terminal in the Linux box (systemd)
+
+Check for USB properties of your device:
+
+```
+# udevadm info -a -n /dev/ttyACM0
+
+...
+
+  looking at parent device '/devices/pci0000:00/0000:00:11.0/0000:02:01.0/usb2/2-2/2-2.1':
+
+    ATTRS{idProduct}=="1001"
+    ATTRS{idVendor}=="303a"
+    ATTRS{manufacturer}=="Espressif"
+    ATTRS{product}=="USB JTAG/serial debug unit"
+    ATTRS{serial}=="B8:F8:62:2D:70:AC"
+...
+```
+
+Choose the most relevant for your case and create a new udev rule:
+
+```
+# cat /etc/udev/rules.d/99-esp32-console.rules
+
+KERNEL=="ttyACM*", \
+SUBSYSTEMS=="usb", \
+ATTRS{idVendor}=="303a", \
+ATTRS{idProduct}=="1001", \
+SYMLINK+="ttyESP32"
+```
+
+This rule will create a symlink called `/dev/ttyESP32` to `/dev/ttyACMx` each time you plug your ESP32:
+
+```
+lrwxrwxrwx 1 root root          7 Jan  4 13:55 /dev/ttyESP32 -> ttyACM0
+crw-rw---- 1 root dialout 166,  0 Jan  4 13:55 /dev/ttyACM0
+```
+
+Now you could do `agetty -L ttyESP32`, so you can leverage systemd tty generator:
+
+```
+systemctl enable --now getty@ttyESP32.service
+```
+
 
 ### Access console remotely
 
