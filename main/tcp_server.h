@@ -2,6 +2,7 @@
 #ifndef TCP_SERVER_H
 #define TCP_SERVER_H
 
-void tcp_server_start(void);
+// arg: ring buffer to read bytes from
+void tcp_server_task(void *);
 
 #endif // TCP_SERVER_H

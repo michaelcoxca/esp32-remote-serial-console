@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "usb_direct.h"
+#include "ringbuf.h"
 
 // Telnet protocol constants
 #define TELNET_IAC       255
@@ -46,6 +47,8 @@
 #define LOCK_TIME_SEC 60  // Lockout duration (seconds)
 
 static const char *TAG = "tcp_server";
+
+static ringbuf_t usb_read_rb = NULL;
 
 static struct {
     uint8_t attempts;
@@ -300,11 +303,14 @@ static void handle_session(int sock) {
             }
         }
 
-        // USB -> Telnet
+        // USB -> Telnet (from ring buffer)
+        if (ringbuf_count(usb_read_rb) == ringbuf_capacity(usb_read_rb) - 1) {
+            ESP_LOGW(TAG, "USB buffer was full - some data may have been dropped");
+        }
         uint8_t usb_buf[USB_BUF_SIZE];
         int total = 0;
         while (total < 2048) {
-            int rx = usb_read(usb_buf, USB_BUF_SIZE);
+            int rx = ringbuf_get_bytes(usb_read_rb, usb_buf, USB_BUF_SIZE);
             if (rx <= 0) break;
             send(sock, usb_buf, rx, 0);
             total += rx;
@@ -343,9 +349,19 @@ static void handle_client_secure(int sock) {
 // ========================
 // Server Task
 // ========================
-static void tcp_server_task(void *pvParameters) {
+void tcp_server_task(void *pvParameters) {
+    ringbuf_t rb = (ringbuf_t)pvParameters;
+    
+    if (!rb) {
+        ESP_LOGE(TAG, "Ring buffer is NULL!");
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    usb_read_rb = rb;
+    
     char addr_str[128];
-    int addr_family = (int)pvParameters;
+    int addr_family = AF_INET;
     int ip_protocol = 0;
     int keepAlive = 1;
     int nodelay = NODELAY_FLAG;
@@ -353,6 +369,10 @@ static void tcp_server_task(void *pvParameters) {
     int keepInterval = KEEPALIVE_INTERVAL;
     int keepCount = KEEPALIVE_COUNT;
     struct sockaddr_storage dest_addr;
+
+    ESP_LOGI(TAG, "Starting Telnet server...");
+
+    ESP_ERROR_CHECK(esp_netif_init());
 
     if (addr_family == AF_INET) {
         struct sockaddr_in *dest_addr_ip4 = (struct sockaddr_in *)&dest_addr;
@@ -416,14 +436,4 @@ static void tcp_server_task(void *pvParameters) {
 CLEAN_UP:
     close(listen_sock);
     vTaskDelete(NULL);
-}
-
-// ========================
-// Public Start Function
-// ========================
-void tcp_server_start(void) {
-    ESP_LOGI(TAG, "Starting Telnet server...");
-    ESP_ERROR_CHECK(esp_netif_init());
-
-    xTaskCreate(tcp_server_task, "tcp_server", 4096, (void*)AF_INET, 5, NULL);
 }

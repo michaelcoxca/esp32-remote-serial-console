@@ -5,6 +5,8 @@ idf_component_register(SRCS
                             "wifi_manager.c"
                             "tcp_server.c"
                             "usb_direct.c"
+                            "ringbuf.c"
+                            "usb_reader.c"
                        INCLUDE_DIRS 
                             "."
                        REQUIRES 

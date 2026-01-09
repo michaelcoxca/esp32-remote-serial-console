@@ -14,7 +14,7 @@ Suitable for ESP32-C3 boards with native USB-Serial bridge (Super Mini or Wavesh
 - **Low level USB CDC I/O** to avoid `usb_serial_jtag` driver (ESP-IDF v5.5.2 seems still buggy).
 - **Telnet server**: support negotiation to supress local echo. Strips IAC/DO/WILL commands to keep terminal clean. Handles all Telnet newlines (LF, CR-LF, CR-NUL).
 - **Session authentication**: Password optional but recommended since the remote serial console could be left open.
-
+- **Background USB reader** prevents host console buffer stalls and retains the last 64 KB of output for immediate viewing on connect.
 
 ## Operation
 
