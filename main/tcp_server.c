@@ -36,7 +36,7 @@
 #define TELNET_CR        13
 #define TELNET_LF        10
 
-#define USB_BUF_SIZE     64    // USB I/O chunk size
+#define TCP_BUF_SIZE     CONFIG_LWIP_TCP_MSS  // TCP I/O chunk size (<= Maximum Segment Size)
 
 #define KEEPALIVE_IDLE     5    // Start keepalive after X sec idle
 #define KEEPALIVE_INTERVAL 1    // Probe every X sec
@@ -307,17 +307,12 @@ static void handle_session(int sock) {
         if (ringbuf_count(usb_read_rb) == ringbuf_capacity(usb_read_rb) - 1) {
             ESP_LOGW(TAG, "USB buffer was full - some data may have been dropped");
         }
-        uint8_t usb_buf[USB_BUF_SIZE];
-        int total = 0;
-        while (total < 2048) {
-            int rx = ringbuf_get_bytes(usb_read_rb, usb_buf, USB_BUF_SIZE);
-            if (rx <= 0) break;
-            send(sock, usb_buf, rx, 0);
-            total += rx;
-        }
-        if (total >= 2048) {
-            ESP_LOGW(TAG, "USB flood: >2KB in one poll");
-        }
+        uint8_t tcp_buf[TCP_BUF_SIZE];
+        int rx = ringbuf_get_bytes(usb_read_rb, tcp_buf, TCP_BUF_SIZE);
+        send(sock, tcp_buf, rx, 0);
+
+        vTaskDelay(1); // minimal yield for watchdog
+
     }
 
     ESP_LOGI(TAG, "Bridge session ended");
