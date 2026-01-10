@@ -17,6 +17,19 @@ Suitable for ESP32-C3 boards with native USB-Serial bridge (Super Mini or Wavesh
 - **Background USB reader** prevents host console buffer stalls and retains the last 64 KB of output for immediate viewing on connect.
 
 
+```
+  Server            ESP32-C3            Client
+┌────────┐     ┌───────┬────────┐     ┌────────┐
+│        │ USB │       │        │ TCP │        │
+│Console │◄───►│  CDC  │ Socket │◄───►│ Telnet │
+│        │     │       │        │     │        │
+└────────┘     └───────┴────────┘     └────────┘
+                    ┌─────┐
+                    │UART0│ ◄──────►  Initial provisioning & debug
+                    └─────┘
+```
+
+
 ## Build and Flash
 
 Tested on ESP-IDF version: v5.5.2
