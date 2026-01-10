@@ -34,12 +34,12 @@ void app_main(void) {
     }
 
     // Must have less priority than TCP server to facilitate sending the bytes
-    if (xTaskCreate(usb_reader_task, "usb_reader", 2048, (void *)rb, 5, NULL) != pdPASS) {
+    if (xTaskCreate(usb_reader_task, "usb_reader", 4096, (void *)rb, 2, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create usb_reader task");
     }
 
     // Console task for provisioning
-    if (xTaskCreate(console_task, "console", 4096, NULL, 1, NULL) != pdPASS) {
+    if (xTaskCreate(console_task, "console", 4096, NULL, 3, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create console task");
     }
 
@@ -56,7 +56,7 @@ void app_main(void) {
     
     wifi_manager_start();
     
-    if (xTaskCreate(tcp_server_task, "tcp_server", 4096, (void *)rb, 3, NULL) != pdPASS) {
+    if (xTaskCreate(tcp_server_task, "tcp_server", 4096, (void *)rb, 1, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create tcp_server task");
     }
 
