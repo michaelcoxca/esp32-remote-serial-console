@@ -1,19 +1,19 @@
 # Remote Serial Console over Telnet (ESP32-C3)
 
-An **out-of-band remote serial console** using the **ESP32-C3** to provide emergency access to a headless server or embedded system when primary network services fail.
+An **out-of-band remote serial console** using the **ESP32-C3** to provide emergency access via WiFi to a headless server or embedded system when primary network services fail.
 
-The ESP32-C3 acts as a **network-to-serial bridge**: it connects to your target device’s serial console via its internal USB CDC interface and exposes it securely over a **password-protected Telnet server** on a static IP.
+The ESP32-C3 acts as a **network-to-serial bridge**: it connects to your target device’s serial console via its internal USB CDC interface and exposes it securely over a **password-protected Telnet server** on a static WiFi IP.
 
 
 ## Overview and features
 
 Suitable for ESP32-C3 boards with native USB-Serial bridge (Super Mini or Waveshare ESP32-C3-Zero).
 
-- **Local Management**: Use UART0 for device configuration & debugging
-- **Static IP** Telnet server on configurable IP and port
-- **Low level USB CDC I/O** to avoid `usb_serial_jtag` driver (ESP-IDF v5.5.2 seems still buggy).
-- **Telnet server**: support negotiation to supress local echo. Strips IAC/DO/WILL commands to keep terminal clean. Handles all Telnet newlines (LF, CR-LF, CR-NUL).
-- **Session authentication**: Password optional but recommended since the remote serial console could be left open.
+- **Local Management**: Use UART0 for device configuration & debugging. Requires physical access to the device and external USB to Serial adapter (maybe a second ESP32C3: [ESP32-C3 UART Bridge](https://github.com/electronicayciencia/esp32-uart-bridge)).
+- **Static IP**: configurable IP and port.
+- **Telnet negotiation**: suppress local echo and parse IAC/DO/WILL commands to keep terminal clean. Multiple telnet newline format are supported (LF, CR-LF, CR-NUL).
+- **Session authentication**: Optional password protection with delay after 3 failed login attempts.
+- **Low level USB CDC I/O** to avoid `usb_serial_jtag` driver. See [USB Serial JTAG Read Bug](https://github.com/electronicayciencia/esp32-misc/tree/master/usb_serial_jtag_read)
 - **Background USB reader** prevents host console buffer stalls and retains the last 64 KB of output for immediate viewing on connect.
 
 
@@ -21,7 +21,7 @@ Suitable for ESP32-C3 boards with native USB-Serial bridge (Super Mini or Wavesh
   Server            ESP32-C3            Client
 ┌────────┐     ┌───────┬────────┐     ┌────────┐
 │        │ USB │       │        │ TCP │        │
-│Console │◄───►│  CDC  │ Socket │◄───►│ Telnet │
+│Console │◄───►│  CDC  │  WiFi  │◄───►│ Telnet │
 │        │     │       │        │     │        │
 └────────┘     └───────┴────────┘     └────────┘
                     ┌─────┐
@@ -123,21 +123,21 @@ Plug the board to the Linux box.
 
 Identify the tty assigned to the ESP32 (could be different in each reboot).
 
-```bash
+```console
 # readlink  /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*
 ../../ttyACM0
 ```
 
 Get the device name:
 
-```bash
+```console
 # basename ../../ttyACM0
 ttyACM0
 ```
 
 Spawn a serial console:
 
-```bash
+```console
 # setsid \
   agetty -L \
   $(basename $(readlink /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*))\
@@ -146,9 +146,9 @@ Spawn a serial console:
 
 ### Setup a terminal in the Linux box (systemd)
 
-Check for USB properties of your device:
+Connect your device and check for USB properties:
 
-```
+```console
 # udevadm info -a -n /dev/ttyACM0
 
 ...
@@ -163,9 +163,11 @@ Check for USB properties of your device:
 ...
 ```
 
-Choose the most relevant for your case and create a new udev rule:
+Choose the most relevant for your case and create a new udev rule.
 
-```
+This is a generic rule. It works if this is the only ESP32 plugged:
+
+```console
 # cat /etc/udev/rules.d/99-esp32-console.rules
 
 KERNEL=="ttyACM*", \
@@ -175,31 +177,44 @@ ATTRS{idProduct}=="1001", \
 SYMLINK+="ttyESP32"
 ```
 
-This rule will create a symlink called `/dev/ttyESP32` to `/dev/ttyACMx` each time you plug your ESP32:
+This rule will create a symlink called `/dev/ttyESP32` to `/dev/ttyACMx` each time the kernel detects your ESP32:
 
 ```
 lrwxrwxrwx 1 root root          7 Jan  4 13:55 /dev/ttyESP32 -> ttyACM0
 crw-rw---- 1 root dialout 166,  0 Jan  4 13:55 /dev/ttyACM0
 ```
 
-Now you could do `agetty -L ttyESP32`, so you can leverage systemd tty generator:
+Now you can activate a new terminal using systemd tty generator:
 
-```
+```console
 systemctl enable --now getty@ttyESP32.service
 ```
+
+
+### Redirect kernel messages via rsyslog
+
+Setup syslog to forward messages to `ttyESP32` (in Ubuntu):
+
+```console
+# usermod -aG dialout syslog
+# echo 'kern.*  /dev/ttyESP32' | tee /etc/rsyslog.d/99-ttyESP32.conf
+# systemctl restart rsyslog
+```
+
+The incoming kernel messages will be kept until new login in a 64kb ring buffer.
 
 
 ### Access console remotely
 
 Telnet to configured IP and port. Using a telnet client: Putty, Telnet, etc.
 
-```bash
+```console
 telnet 192.168.1.4 23
 ```
 
 Example session:
 
-```
+```console
 Remote Console Telnet Server
 Password: ******
 
@@ -217,7 +232,7 @@ Welcome to Ubuntu 18.04.2 LTS (GNU/Linux 4.15.0-55-generic x86_64)
 reinoso@cuadrado:~$
 ```
 
-Error when you try to send bytes to Linux when ESP32 is not connected, or agetty is not running at the other end:
+Error when you try to send bytes to Linux when ESP32 is not connected, or `agetty` is not running at the other end:
 
 ```
 --- Remote console open ---
@@ -226,17 +241,6 @@ Error when you try to send bytes to Linux when ESP32 is not connected, or agetty
 
 --- Remote end not listening ---
 ```
-
-### Redirect kernel messages via rsyslog
-
-Setup syslog to forward messages to `ttyESP32` (in Ubuntu):
-
-```bash
-usermod -aG dialout syslog
-echo 'kern.*  /dev/ttyESP32' | tee /etc/rsyslog.d/99-ttyESP32.conf
-systemctl restart rsyslog
-```
-
 
 ## Security Notes
 
