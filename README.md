@@ -16,11 +16,29 @@ Suitable for ESP32-C3 boards with native USB-Serial bridge (Super Mini or Wavesh
 - **Session authentication**: Password optional but recommended since the remote serial console could be left open.
 - **Background USB reader** prevents host console buffer stalls and retains the last 64 KB of output for immediate viewing on connect.
 
+
+## Build and Flash
+
+Tested on ESP-IDF version: v5.5.2
+
+```
+idf.py set-target esp32c3
+idf.py menuconfig
+idf.py build
+idf.py flash
+```
+
+Options for menuconfig:
+
+- Component config → ESP System Settings → Channel for console output: **Default: UART0**
+- Component config → ESP System Settings → Channel for console secondary output: **No secondary console**
+
+
 ## Operation
 
 ### Monitor and configure
 
-Connect to UART0.
+Right after flashing, connect to UART0: 115200 bauds.
 
 ```
 W (302) main: Device is not configured yet.
@@ -64,7 +82,12 @@ Default password is **secret**. Set `sespass` to "" to disable it.
 
 After reboot, check WiFi connection logs, etc.
 
-You can reconfigure options at any moment. To show  current configuration:
+Look for IP confirmation:
+```
+I (1000) wifi_manager: Got IP: 192.168.1.4
+```
+
+You can reconfigure options at any moment. To show current configuration:
 
 ```
 esp> conf
@@ -189,30 +212,23 @@ Error when you try to send bytes to Linux when ESP32 is not connected, or agetty
 
 
 --- Remote end not listening ---
-
 ```
+
+### Redirect kernel messages via rsyslog
+
+Setup syslog to forward messages to `ttyESP32` (in Ubuntu):
+
+```bash
+usermod -aG dialout syslog
+echo 'kern.*  /dev/ttyESP32' | tee /etc/rsyslog.d/99-ttyESP32.conf
+systemctl restart rsyslog
+```
+
 
 ## Security Notes
 
 - Telnet traffic is **unencrypted**.
 - Session requires password, but credentials are sent in plaintext.
-
-
-## Build and Flash
-
-Tested on ESP-IDF version: v5.5.2
-
-```
-idf.py set-target esp32c3
-idf.py menuconfig
-idf.py build
-idf.py flash
-```
-
-Options for menuconfig:
-
-- Component config → ESP System Settings → Channel for console output: **Default: UART0**
-- Component config → ESP System Settings → Channel for console secondary output: **No secondary console**
 
 
 ## Author

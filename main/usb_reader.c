@@ -21,23 +21,43 @@ void usb_reader_task(void* pvParameters) {
     }
     
     uint8_t buf[USB_READ_CHUNK_SIZE];
+    const TickType_t MAX_TIME_BETWEEN_PAUSE = pdMS_TO_TICKS(50); // 50ms
+
+    TickType_t last_pause_time = xTaskGetTickCount();
 
     ESP_LOGI(TAG, "USB reader task started");
 
     while (1) {
         int rx = usb_read(buf, sizeof(buf));
+        size_t written = 0;
 
         if (rx > 0) {
-            // Push all received bytes into ring buffer
-            size_t written = ringbuf_put_bytes(rb, buf, (size_t)rx);
+            written = ringbuf_put_bytes(rb, buf, (size_t)rx);
+
             if (written != (size_t)rx) {
-                // This shouldn't happen with overwrite-on-full design,
-                // but log just in case
-                ESP_LOGD(TAG, "Ring buffer dropped %d bytes", (int)(rx - written));
+                ESP_LOGD(TAG, "Dropped %d bytes", (int)(rx - written));
             }
         }
-        // Small delay to avoid tight loop since usb_read() is non-blocking
-        // Also to give time for TCP server to send the bytes.
-        vTaskDelay(pdMS_TO_TICKS(10));
+
+        // Compute 3/4 fill threshold
+        uint32_t count = ringbuf_count(rb);
+        uint32_t capacity = ringbuf_capacity(rb);
+        uint32_t threshold_3_4 = (3 * capacity) / 4;
+
+        // If buffer is >= 3/4 full, slow down
+        if (count >= threshold_3_4) {
+            vTaskDelay(pdMS_TO_TICKS(15));
+            last_pause_time = xTaskGetTickCount();
+            continue;
+        }
+
+        TickType_t now = xTaskGetTickCount();
+        TickType_t time_elapsed = now - last_pause_time;
+
+        if (time_elapsed >= MAX_TIME_BETWEEN_PAUSE) {
+            vTaskDelay(1); // minimal yield for watchdog
+            last_pause_time = xTaskGetTickCount();
+        }
+
     }
 }
