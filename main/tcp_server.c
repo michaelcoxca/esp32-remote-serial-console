@@ -228,6 +228,9 @@ static void handle_session(int sock) {
     send(sock, banner, strlen(banner), 0);
     ESP_LOGI(TAG, "Bridge session started");
 
+    const TickType_t MAX_TIME_BETWEEN_PAUSE = pdMS_TO_TICKS(50); // Yield every this ms
+    TickType_t last_pause_time = xTaskGetTickCount();
+
     while (1) {
         fd_set readset;
         FD_ZERO(&readset);
@@ -239,93 +242,64 @@ static void handle_session(int sock) {
             break;
         }
 
-        uint8_t tcp_buf[TCP_BUF_SIZE];
-
-        // Telnet -> USB: bulk read, per-byte processing, normalize, batch write
+        // Telnet -> USB (minimal latency)
         if (FD_ISSET(sock, &readset)) {
-            int sock_rx = recv(sock, tcp_buf, sizeof(tcp_buf), MSG_DONTWAIT);
-            
-            if (sock_rx <= 0) {
+            int c = telnet_recv_byte(sock, 0);
+            if (c < 0) {
                 ESP_LOGI(TAG, "Client disconnected (TCP close)");
                 break;
             }
 
-            // Output buffer for normalized bytes
-            uint8_t usb_out_buf[64];
-            size_t usb_out_len = 0;
+            int result = process_telnet_byte(sock, (uint8_t)c);
+            if (result == -2) break; // EOF
+            if (result < 0) continue;
 
-            // State for line-ending normalization
+            c = result;
+
+            // --- Line-ending normalization ---
             static bool prev_was_cr = false;
+            uint8_t out_byte = 0;
+            bool emit = false;
 
-            for (int i = 0; i < sock_rx; i++) {
-                uint8_t c = tcp_buf[i];
-
-                // Handle Telnet protocol
-                int result = process_telnet_byte(sock, c);
-                if (result == -2) {
-                    goto session_end; // or break outer loop
-                }
-                if (result < 0) {
-                    continue; // IAC, negotiation, etc.
-                }
-                c = (uint8_t)result;
-
-                // --- Line-ending normalization ---
-                uint8_t emit_byte = 0;
-                bool emit = false;
-
-                if (prev_was_cr) {
-                    prev_was_cr = false;
-                    if (c == TELNET_LF || c == 0) {
-                        emit_byte = TELNET_LF;
-                        emit = true;
-                    } else {
-                        // CR+X → emit LF, then handle X
-                        emit_byte = TELNET_LF;
-                        emit = true;
-                        // After emitting LF, process 'c' below
-                        if (emit) {
-                            if (usb_out_len < sizeof(usb_out_buf)) {
-                                usb_out_buf[usb_out_len++] = emit_byte;
-                            }
-                        }
-                        // Now fall through to handle 'c'
-                        emit = false;
-                    }
-                }
-
-                if (!emit) {
-                    if (c == TELNET_CR) {
-                        prev_was_cr = true;
-                        continue;
-                    } else if (c == TELNET_LF || c == 0) {
-                        emit_byte = TELNET_LF;
-                        emit = true;
-                    } else {
-                        emit_byte = c;
-                        emit = true;
-                    }
-                }
-
-                if (emit) {
-                    if (usb_out_len < sizeof(usb_out_buf)) {
-                        usb_out_buf[usb_out_len++] = emit_byte;
-                    }
-                }
-
-                // Flush if buffer full
-                if (usb_out_len >= sizeof(usb_out_buf)) {
-                    if (usb_write(usb_out_buf, usb_out_len) != (int)usb_out_len) {
+            if (prev_was_cr) {
+                prev_was_cr = false;
+                if (c == TELNET_LF || c == 0) {
+                    // CR LF or CR NUL -> LF
+                    out_byte = TELNET_LF;
+                    emit = true;
+                } else {
+                    // CR followed by something else: treat CR as LF, and reprocess current char
+                    // Emit LF first
+                    out_byte = TELNET_LF;
+                    emit = true;
+                    // And now reprocess 'c' in next iteration
+                    if (usb_write(&out_byte, 1) != 1) {
                         const char err[] = "\r\n--- Remote end not listening ---\r\n";
                         send(sock, err, strlen(err), 0);
                     }
-                    usb_out_len = 0;
+                    // Now treat 'c' as a fresh input byte
+                    // (fall through to normal processing below)
                 }
             }
 
-            // Flush remaining bytes
-            if (usb_out_len > 0) {
-                if (usb_write(usb_out_buf, usb_out_len) != (int)usb_out_len) {
+            if (!emit) {
+                if (c == TELNET_CR) {
+                    prev_was_cr = true;
+                    continue; // don't emit yet
+                } else if (c == TELNET_LF) {
+                    out_byte = TELNET_LF;
+                    emit = true;
+                } else if (c == 0) {
+                    out_byte = TELNET_LF;
+                    emit = true;
+                } else {
+                    out_byte = (uint8_t)c;
+                    emit = true;
+                }
+            }
+
+            if (emit) {
+                if (usb_write(&out_byte, 1) != 1) {
                     const char err[] = "\r\n--- Remote end not listening ---\r\n";
                     send(sock, err, strlen(err), 0);
                 }
@@ -337,14 +311,21 @@ static void handle_session(int sock) {
             const char err[] = "--- USB buffer was full - some data may have been dropped ---\r\n";
             send(sock, err, strlen(err), 0);
         }
+        uint8_t tcp_buf[TCP_BUF_SIZE];
         int rx = ringbuf_get_bytes(usb_read_rb, tcp_buf, TCP_BUF_SIZE);
         send(sock, tcp_buf, rx, 0);
 
-        vTaskDelay(1); // minimal yield for watchdog
+        // Pause if needed
+        TickType_t now = xTaskGetTickCount();
+        TickType_t time_elapsed = now - last_pause_time;
+
+        if (time_elapsed >= MAX_TIME_BETWEEN_PAUSE) {
+            vTaskDelay(1); // minimal yield for watchdog
+            last_pause_time = xTaskGetTickCount();
+        }
 
     }
 
-session_end:
     ESP_LOGI(TAG, "Bridge session ended");
 }
 

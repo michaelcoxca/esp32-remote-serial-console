@@ -42,8 +42,8 @@ int usb_write(uint8_t *buf, uint32_t len) {
 
     while (total_written < len) {
         int written_now = usb_serial_jtag_ll_write_txfifo(pos, len - total_written);
+        usb_serial_jtag_ll_txfifo_flush();
         if (written_now > 0) {
-            usb_serial_jtag_ll_txfifo_flush();
             total_written += written_now;
             pos += written_now;
             timeouts = 0;
