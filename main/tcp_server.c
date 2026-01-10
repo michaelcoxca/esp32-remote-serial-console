@@ -305,7 +305,8 @@ static void handle_session(int sock) {
 
         // USB -> Telnet (from ring buffer)
         if (ringbuf_count(usb_read_rb) == ringbuf_capacity(usb_read_rb) - 1) {
-            ESP_LOGW(TAG, "USB buffer was full - some data may have been dropped");
+            const char err[] = "--- USB buffer was full - some data may have been dropped ---\r\n";
+            send(sock, err, strlen(err), 0);
         }
         uint8_t tcp_buf[TCP_BUF_SIZE];
         int rx = ringbuf_get_bytes(usb_read_rb, tcp_buf, TCP_BUF_SIZE);
