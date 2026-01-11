@@ -117,93 +117,6 @@ port:    23
 sespass: *** (set)
 ```
 
-### Spawn a terminal in the Linux box (for testing)
-
-Plug the board to the Linux box.
-
-Identify the tty assigned to the ESP32 (could be different in each reboot).
-
-```console
-# readlink  /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*
-../../ttyACM0
-```
-
-Get the device name:
-
-```console
-# basename ../../ttyACM0
-ttyACM0
-```
-
-Spawn a serial console:
-
-```console
-# setsid \
-  agetty -L \
-  $(basename $(readlink /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*))\
-  linux
-```
-
-### Setup a terminal in the Linux box (systemd)
-
-Connect your device and check for USB properties:
-
-```console
-# udevadm info -a -n /dev/ttyACM0
-
-...
-
-  looking at parent device '/devices/pci0000:00/0000:00:11.0/0000:02:01.0/usb2/2-2/2-2.1':
-
-    ATTRS{idProduct}=="1001"
-    ATTRS{idVendor}=="303a"
-    ATTRS{manufacturer}=="Espressif"
-    ATTRS{product}=="USB JTAG/serial debug unit"
-    ATTRS{serial}=="B8:F8:62:2D:70:AC"
-...
-```
-
-Choose the most relevant for your case and create a new udev rule.
-
-This is a generic rule. It works if this is the only ESP32 plugged:
-
-```console
-# cat /etc/udev/rules.d/99-esp32-console.rules
-
-KERNEL=="ttyACM*", \
-SUBSYSTEMS=="usb", \
-ATTRS{idVendor}=="303a", \
-ATTRS{idProduct}=="1001", \
-SYMLINK+="ttyESP32"
-```
-
-This rule will create a symlink called `/dev/ttyESP32` to `/dev/ttyACMx` each time the kernel detects your ESP32:
-
-```
-lrwxrwxrwx 1 root root          7 Jan  4 13:55 /dev/ttyESP32 -> ttyACM0
-crw-rw---- 1 root dialout 166,  0 Jan  4 13:55 /dev/ttyACM0
-```
-
-Now you can activate a new terminal using systemd tty generator:
-
-```console
-systemctl enable --now getty@ttyESP32.service
-```
-
-
-### Redirect kernel messages via rsyslog
-
-Setup syslog to forward messages to `ttyESP32` (in Ubuntu):
-
-```console
-# usermod -aG dialout syslog
-# echo 'kern.*  /dev/ttyESP32' | tee /etc/rsyslog.d/99-ttyESP32.conf
-# systemctl restart rsyslog
-```
-
-The incoming kernel messages will be kept until new login in a 64kb ring buffer.
-
-
 ### Access console remotely
 
 Telnet to configured IP and port. Using a telnet client: Putty, Telnet, etc.
@@ -232,6 +145,8 @@ Welcome to Ubuntu 18.04.2 LTS (GNU/Linux 4.15.0-55-generic x86_64)
 reinoso@cuadrado:~$
 ```
 
+### Troubleshooting
+
 Error when you try to send bytes to Linux when ESP32 is not connected, or `agetty` is not running at the other end:
 
 ```
@@ -241,6 +156,122 @@ Error when you try to send bytes to Linux when ESP32 is not connected, or `agett
 
 --- Remote end not listening ---
 ```
+
+## Linux setup tips
+
+### Spawn a terminal in the Linux box (for testing)
+
+Plug the board to the Linux box.
+
+Identify the tty assigned to the ESP32 (could be different in each reboot).
+
+```console
+# readlink  /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*
+../../ttyACM0
+```
+
+Get the device name:
+
+```console
+# basename ../../ttyACM0
+ttyACM0
+```
+
+Spawn a serial console:
+
+```console
+# setsid \
+  agetty -L \
+  $(basename $(readlink /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*))\
+  linux
+```
+
+### Decide a name for your new device
+
+Connect your device and check its USB properties in syslog:
+
+```console
+kernel: usb 1-4: new full-speed USB device number 4 using xhci_hcd
+kernel: usb 1-4: New USB device found, idVendor=303a, idProduct=1001, bcdDevice= 1.01
+kernel: usb 1-4: Product: USB JTAG/serial debug unit
+kernel: usb 1-4: Manufacturer: Espressif
+kernel: usb 1-4: SerialNumber: AC:A7:04:BA:3A:38
+```
+
+Or list the full info with this command:
+
+```console
+# udevadm info -a -n /dev/ttyACM0
+...
+ATTRS{idProduct}=="1001"
+ATTRS{idVendor}=="303a"
+ATTRS{manufacturer}=="Espressif"
+ATTRS{product}=="USB JTAG/serial debug unit"
+ATTRS{serial}=="AC:A7:04:BA:3A:38"
+...
+```
+
+Choose the most relevant for your case and create a new udev rule.
+
+Since this is the only "Espressif"'s "USB JTAG/serial debug unit" I will have in my box, I need only `idProduct` and `idVendor` values. Feel free to add `ATTRS{serial}` if you require it.
+
+```console
+# cat /etc/udev/rules.d/99-esp32-console.rules
+
+KERNEL=="ttyACM*", \
+SUBSYSTEMS=="usb", \
+ATTRS{idVendor}=="303a", \
+ATTRS{idProduct}=="1001", \
+SYMLINK+="ttyESP32"
+```
+
+This rule will create a symlink called `/dev/ttyESP32` to `/dev/ttyACMx` each time the kernel detects your ESP32:
+
+```
+lrwxrwxrwx 1 root root          7 Jan  4 13:55 /dev/ttyESP32 -> ttyACM0
+crw-rw---- 1 root dialout 166,  0 Jan  4 13:55 /dev/ttyACM0
+```
+
+### Make it available at early boot
+
+Best path: custom compiled kernel with `cdc_acm` driver built-in.
+
+Second best path: add `cdc_acm` module to the Init Ram Disk:
+
+```console
+# cat /etc/initramfs-tools/modules
+
+cdc_acm
+```
+
+Now run `update-initramfs`.
+
+
+### Enable TTY at bootup (systemd)
+
+Activate a new terminal using systemd tty generator:
+
+```console
+systemctl enable --now getty@ttyESP32.service
+```
+
+### Redirect kernel messages via rsyslog
+
+The kernel `console=` parameter will not work if the driver is compiled as a module.
+So a true console is not possible unless you compile a custom kernel.
+
+You cannot add an additional console once the system is running and `ttyESP32` is available.
+
+But you can setup syslog to forward kernel messages to `ttyESP32` (in Ubuntu):
+
+```console
+# usermod -aG dialout syslog
+# echo 'kern.*  /dev/ttyESP32' | tee /etc/rsyslog.d/99-ttyESP32.conf
+# systemctl restart rsyslog
+```
+
+The incoming kernel messages will be kept until new login in a 64kb ring buffer.
+
 
 ## Security Notes
 
