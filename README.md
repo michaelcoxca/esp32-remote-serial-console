@@ -46,6 +46,15 @@ Options for menuconfig:
 - Component config → ESP System Settings → Channel for console output: **Default: UART0**
 - Component config → ESP System Settings → Channel for console secondary output: **No secondary console**
 
+### Flash files
+
+Check release section for binaries. You can use ESPWebTool or `esptool.py` to flash.
+
+Offsets for ESP32-C3:
+
+- `0x0`: `bootloader.bin`
+- `0x8000`: `partition-table.bin`
+- `0x10000`: `remote_console.bin`
 
 ## Operation
 
