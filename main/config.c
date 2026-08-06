@@ -135,28 +135,45 @@ void config_reset_to_factory(void) {
     memset(&g_config, 0, sizeof(g_config));
 
     // Set defaults in RAM
-    g_config.port = 23;
-    strcpy(g_config.gateway, "192.168.1.1");
-    strcpy(g_config.netmask, "255.255.255.0");
-    strcpy(g_config.sespass, "secret");
+    g_config.port = CONFIG_TELNET_DEFAULT_PORT;
+    strcpy(g_config.sespass, CONFIG_TELNET_DEFAULT_PASSWORD);
+
+    #if CONFIG_IPV4_STATIC_SELECTED
+        strcpy(g_config.gateway, CONFIG_IPV4_STATIC_GATEWAY);
+        strcpy(g_config.netmask, CONFIG_IPV4_STATIC_SUBNET_MASK);
+        strcpy(g_config.ip, CONFIG_IPV4_STATIC_IP);
+    #else 
+        strcpy(g_config.gateway, "192.168.1.1");
+        strcpy(g_config.netmask, "255.255.255.0");
+        strcpy(g_config.ip, "192.168.1.2");
+    #endif
+    #if CONFIG_WIFI_MODE_STA_SELECTED
+        strcpy((char *)g_config.ssid, CONFIG_STA_WIFI_SSID);
+        strcpy((char *)g_config.password, CONFIG_STA_WIFI_PASSWORD);
+    #endif
 
     // Persist ONLY the allowed defaults to NVS
-    config_save_port(23);
-    config_save_gateway("192.168.1.1");
-    config_save_netmask("255.255.255.0");
-    config_save_sespass("secret");
+    config_save_port(g_config.port);
+    config_save_gateway(g_config.gateway);
+    config_save_netmask(g_config.netmask);
+    config_save_sespass(g_config.sespass);
 
-    // Note: ssid, ip, password remain unset (not saved to NVS)
+    config_save_ip(g_config.ip);
+
+    config_save_ssid(g_config.ssid);
+    config_save_password(g_config.password);
+
 }
 
 esp_err_t config_load(void) {
+    
     nvs_handle_t handle;
     esp_err_t err = nvs_open("config", NVS_READONLY, &handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "NVS empty or not initialized");
         return err;
     }
-
+    config_reset_to_factory();
     size_t len;
 
     len = sizeof(g_config.ssid);
@@ -178,11 +195,12 @@ esp_err_t config_load(void) {
 
     len = sizeof(g_config.sespass);
     nvs_get_str(handle, "sespass", g_config.sespass, &len);
+
     
     nvs_close(handle);
 
     if (g_config.port == 0) {
-        g_config.port = 23;
+        g_config.port = CONFIG_TELNET_DEFAULT_PORT;
     }
 
     return ESP_OK;

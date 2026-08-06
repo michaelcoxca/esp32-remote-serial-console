@@ -1,0 +1,99 @@
+menu "Wi-Fi Setup"
+
+    choice WIFI_MODE_CHOICE
+        prompt "Wi-Fi Operating Mode"
+        default WIFI_MODE_STA_SELECTED
+        help
+            Select whether the ESP32 operates as a Station (connects to router)
+            or an Access Point (broadcasts its own Wi-Fi).
+
+        config WIFI_MODE_STA_SELECTED
+            bool "Station Mode (Connect to existing Wi-Fi)"
+
+    endchoice
+
+    menu "Station Mode Settings"
+        depends on WIFI_MODE_STA_SELECTED
+
+        config STA_WIFI_SSID
+            string "Router SSID"
+            default "MyHomeNetwork"
+
+        config STA_WIFI_PASSWORD
+            string "Router Password"
+            default "MySecretPassword"
+
+        menu "IPv4 Configuration"
+
+            choice WIFI_NETWORK_MODE_CHOICE
+                prompt "IP Addressing Type"
+                default IPV4_DHCP_SELECTED
+                help
+                    Select whether the ESP32 uses an automatically assigned IP via DHCP 
+                    or a manually configured static IP address.
+
+                config IPV4_DHCP_SELECTED
+                    bool "DHCP (Automatic IP Address)"
+
+                config IPV4_STATIC_SELECTED
+                    bool "Static IP (Manual Address)"
+            endchoice
+
+            menu "Static IP Settings"
+                depends on IPV4_STATIC_SELECTED
+
+                config IPV4_STATIC_IP
+                    string "Static IP Address"
+                    default "192.168.1.2"
+
+                config IPV4_STATIC_SUBNET_MASK
+                    string "Subnet Mask"
+                    default "255.255.255.0"
+
+                config IPV4_STATIC_GATEWAY
+                    string "Default Gateway"
+                    default "192.168.1.1"
+            endmenu
+
+        endmenu
+
+    endmenu
+
+    menu "Access Point Mode Settings"
+        depends on WIFI_MODE_AP_SELECTED
+
+        config AP_WIFI_SSID
+            string "ESP32 AP SSID"
+            default "ESP32-Serial-Console"
+
+        config AP_WIFI_PASSWORD
+            string "ESP32 AP Password"
+            default "ChangeMe"
+            help
+                Must be at least 8 characters long for WPA2. Leave empty for open AP.
+
+        config AP_WIFI_CHANNEL
+            int "AP Channel"
+            default 1
+
+        config AP_MAX_CONN
+            int "Max Client Connections"
+            default 4
+            help
+                Maximum amount of clients allowed to connect to Access point.
+    endmenu
+
+endmenu
+
+menu "Telnet Server Setup"
+    config TELNET_DEFAULT_PORT
+        int "Default Telnet Port"
+        default 23
+        help
+            Default port that telnet server will listen to.
+    config TELNET_DEFAULT_PASSWORD
+        string "Telnet Password"
+        default "ChangeMe"
+        help
+            Default password used to authenticate a connection to telnet server
+endmenu
