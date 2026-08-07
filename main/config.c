@@ -173,7 +173,7 @@ esp_err_t config_load(void) {
         ESP_LOGW(TAG, "NVS empty or not initialized");
         return err;
     }
-    config_reset_to_factory();
+
     size_t len;
 
     len = sizeof(g_config.ssid);

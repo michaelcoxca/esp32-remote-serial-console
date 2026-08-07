@@ -9,9 +9,11 @@
 #include <stddef.h>
 
 typedef struct ringbuf_s* ringbuf_t;
+typedef size_t ringbuf_size_t; 
 
-// Create ring buffer. Size must be power of two.
-ringbuf_t ringbuf_create(uint32_t size);
+
+// Create ring buffer.
+ringbuf_t ringbuf_create(void);
 
 // Destroy buffer
 void ringbuf_destroy(ringbuf_t rb);
@@ -25,9 +27,9 @@ size_t ringbuf_put_bytes(ringbuf_t rb, const uint8_t* data, size_t len);
 size_t ringbuf_get_bytes(ringbuf_t rb, uint8_t* buf, size_t len);
 
 // Get current fill level
-uint32_t ringbuf_count(ringbuf_t rb);
+size_t ringbuf_count(ringbuf_t rb);
 
 // Get total capacity
-uint32_t ringbuf_capacity(ringbuf_t rb);
+size_t ringbuf_capacity(ringbuf_t rb);
 
 #endif // RINGBUF_H

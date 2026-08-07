@@ -12,9 +12,6 @@
 #include "ringbuf.h"
 #include "usb_reader.h"
 
-// Must be power of 2
-#define USB_READ_BUFFER_SIZE 64*1024
-
 static const char* TAG = "main";
 
 void app_main(void) {
@@ -27,7 +24,7 @@ void app_main(void) {
     config_init();
 
     // Ring buffer and usb_reader to not block the USB Host
-    ringbuf_t rb = ringbuf_create(USB_READ_BUFFER_SIZE);
+    ringbuf_t rb = ringbuf_create();
     if (!rb) {
         ESP_LOGE(TAG, "Failed to create ring buffer");
         return;
